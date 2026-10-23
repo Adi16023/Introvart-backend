@@ -10,6 +10,36 @@ datasource db {
 
 // ───────── People ─────────
 
+enum StaffRole {
+  moderator
+  support
+  operations
+  finance
+  marketing
+  super
+  creator
+}
+
+model StaffUser {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  name         String
+  passwordHash String
+  role         StaffRole
+  creatorId    String?
+  disabled     Boolean   @default(false)
+  tokenVersion Int       @default(0)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}
+
+model StaffSigningKey {
+  id         Int      @id
+  privateKey String
+  publicKey  String
+  createdAt  DateTime @default(now())
+}
+
 model Artist {
   id                String    @id
   slug              String    @unique

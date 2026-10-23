@@ -6,7 +6,6 @@ const port = Number(process.env.PORT ?? 4000);
 export const env = {
   nodeEnv,
   port,
-  staffKey: process.env.STAFF_API_KEY ?? "",
   corsOrigins: (process.env.CORS_ORIGINS ?? "")
     .split(",")
     .map((item) => item.trim())
@@ -21,6 +20,5 @@ export const env = {
 };
 
 if (nodeEnv === "production") {
-  if (!env.staffKey) throw new Error("STAFF_API_KEY must be set in production");
   if (!env.s3.bucket || !env.s3.endpoint) throw new Error("S3_BUCKET and AWS_ENDPOINT_URL_S3 must be set in production");
 }

@@ -13,6 +13,7 @@ import { fulfilRouter } from "./routes/fulfil";
 import { mediaRouter } from "./routes/media";
 import { publicRouter } from "./routes/public";
 import { shopRouter } from "./routes/shop";
+import { staffAuthRouter } from "./routes/staffAuth";
 
 export function buildApp() {
   const app = express();
@@ -21,7 +22,7 @@ export function buildApp() {
   app.use(
     cors({
       origin: env.corsOrigins.length ? env.corsOrigins : true,
-      allowedHeaders: ["Content-Type", "x-customer-id", "x-guest-id", "x-creator-id", "x-admin-role", "x-admin-name", "x-staff-key"],
+      allowedHeaders: ["Content-Type", "Authorization", "x-customer-id", "x-guest-id", "x-creator-id", "x-admin-role", "x-admin-name", "x-staff-key"],
       maxAge: 600,
     }),
   );
@@ -40,6 +41,7 @@ export function buildApp() {
 
   const api = express.Router();
   api.use(identify);
+  api.use("/auth", staffAuthRouter);
   api.use("/creator", creatorRouter);
   api.use("/admin", adminRouter, adminContentRouter);
   api.use("/fulfil", fulfilRouter);

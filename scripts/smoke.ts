@@ -1,24 +1,50 @@
 // End-to-end smoke test against a running API. Usage: npm run dev (or start), then npm run smoke
+import "dotenv/config";
+import { randomBytes } from "node:crypto";
+import { StaffRole } from "@prisma/client";
+import { prisma } from "../src/lib/db";
+import { hashPassword, issueStaffToken } from "../src/services/staff-auth";
+
 const BASE = process.env.API_URL ?? "http://localhost:4000";
-const STAFF = process.env.STAFF_API_KEY ?? "";
+const staffFixtures = new Map<string, string>();
+const staffIds: string[] = [];
+const fixtureRun = randomBytes(8).toString("hex");
 
 let failures = 0;
 let passes = 0;
 
 type Who = { customer?: string; guest?: string; creator?: string; admin?: string };
 
-function headersFor(who: Who) {
+async function headersFor(who: Who) {
   const headers: Record<string, string> = {};
   if (who.customer) headers["x-customer-id"] = who.customer;
   if (who.guest) headers["x-guest-id"] = who.guest;
-  if (who.creator) headers["x-creator-id"] = who.creator;
-  if (who.admin) headers["x-admin-role"] = who.admin;
-  if (STAFF) headers["x-staff-key"] = STAFF;
+  if (who.creator || who.admin) {
+    const fixtureKey = who.creator ? `creator:${who.creator}` : `admin:${who.admin}`;
+    let token = staffFixtures.get(fixtureKey);
+    if (!token) {
+      const role = who.creator ? StaffRole.creator : Object.values(StaffRole).find((value) => value === who.admin);
+      if (!role) throw new Error("Unknown smoke-test staff role");
+      const user = await prisma.staffUser.create({
+        data: {
+          email: `${fixtureRun}-${staffIds.length}@smoke.invalid`,
+          name: "Smoke staff",
+          role,
+          creatorId: who.creator,
+          passwordHash: await hashPassword(randomBytes(32).toString("hex")),
+        },
+      });
+      staffIds.push(user.id);
+      token = (await issueStaffToken(user)).accessToken;
+      staffFixtures.set(fixtureKey, token);
+    }
+    headers.Authorization = `Bearer ${token}`;
+  }
   return headers;
 }
 
 async function call(method: string, path: string, who: Who = {}, body?: unknown) {
-  const headers = { "content-type": "application/json", ...headersFor(who) };
+  const headers = { "content-type": "application/json", ...await headersFor(who) };
   const res = await fetch(`${BASE}/api/v1${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
   const text = await res.text();
   let data: any = text;
@@ -47,7 +73,7 @@ const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
 async function upload(kind: string, who: Who, bytes: Buffer, name = "photo.png", type = "image/png") {
   const form = new FormData();
   form.append("file", new Blob([new Uint8Array(bytes)], { type }), name);
-  const res = await fetch(`${BASE}/api/v1/uploads?kind=${kind}`, { method: "POST", headers: headersFor(who), body: form });
+  const res = await fetch(`${BASE}/api/v1/uploads?kind=${kind}`, { method: "POST", headers: await headersFor(who), body: form });
   return { status: res.status, data: (await res.json()) as any };
 }
 
@@ -303,10 +329,16 @@ async function main() {
   check("B2B lead quoted", quotedLead.data.status === "quoted", quotedLead.data);
 
   console.log(`\n${passes} passed, ${failures} failed`);
-  process.exit(failures ? 1 : 0);
+  process.exitCode = failures ? 1 : 0;
 }
 
 main().catch((error) => {
   console.error(error);
-  process.exit(1);
+  process.exitCode = 1;
+}).finally(async () => {
+  try {
+    if (staffIds.length) await prisma.staffUser.deleteMany({ where: { id: { in: staffIds } } });
+  } finally {
+    await prisma.$disconnect();
+  }
 });

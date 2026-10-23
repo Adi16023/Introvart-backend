@@ -1,0 +1,87 @@
+# Staff authentication setup:
+# 1. npm run db:deploy
+# 2. npm run staff:create -- --email admin@example.com --name "Administrator" --role super
+#    Enter a new 12-128 character password at the hidden prompts.
+#    This is an operator-only CLI; no public registration or default credentials exist.
+#
+# JWTs use RS256 and expire after one hour. The private/public key pair is generated
+# on first login and persisted in StaffSigningKey, shared across restarts/replicas.
+# No STAFF_API_KEY or JWT-secret environment variable is required.
+# Restrict database access and protect backups: the signing private key is sensitive.
+# Deleting the StaffSigningKey row invalidates all issued JWTs; next login makes a new key.
+# Login response accessToken is sent in Authorization, never x-admin-role/x-staff-key.
+# Legacy identity headers remain CORS-allowed for compatibility, but confer no staff access.
+# Do not persist bearer tokens in URLs, logs, source code or localStorage.
+#
+# API consumers must add a login screen and derive visible permissions from /auth/me.
+# Handle 401 by clearing the session and returning to sign-in; 403 means insufficient role.
+# Logout revokes ALL tokens for that account. Role/password/disabled changes revoke tokens.
+# /auth/password also revokes all tokens; sign in again with the new password.
+#
+# Creator routes/uploads now require a staff JWT linked to the artist:
+# npm run staff:create -- --email artist@example.com --name "Artist" --role creator --creator-id meera
+# Artist registration alone does not grant a staff account. x-creator-id is not trusted
+# on protected creator endpoints. Fulfilment requires operations or super.
+#
+# Run npm run test:auth for isolated tests (database calls mocked).
+# npm run smoke MUTATES the configured DB and storage; run only on a disposable test DB.
+# Its temporary staff fixtures are removed after the run; ordinary business fixtures remain.
+
+@baseUrl = http://localhost:4000/api/v1
+@accessToken = REPLACE_WITH_LOGIN_RESPONSE_TOKEN
+
+### Sign in (role is loaded from the database, not accepted in the request).
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@example.com",
+  "password": "REPLACE_WITH_YOUR_PASSWORD"
+}
+
+### Current account, with no password hash.
+GET {{baseUrl}}/auth/me
+Authorization: Bearer {{accessToken}}
+
+### Admin identity and permitted desks.
+GET {{baseUrl}}/admin/me
+Authorization: Bearer {{accessToken}}
+
+### Only super administrators can create accounts.
+POST {{baseUrl}}/auth/staff
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "email": "moderator@example.com",
+  "name": "Moderator",
+  "password": "REPLACE_WITH_A_NEW_PASSWORD",
+  "role": "moderator"
+}
+
+### List staff (super only).
+GET {{baseUrl}}/auth/staff
+Authorization: Bearer {{accessToken}}
+
+### Change another account's role/disabled state/password (super only).
+PATCH {{baseUrl}}/auth/staff/REPLACE_WITH_STAFF_ID
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "disabled": true
+}
+
+### Change own password.
+POST {{baseUrl}}/auth/password
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "currentPassword": "REPLACE_WITH_YOUR_PASSWORD",
+  "newPassword": "REPLACE_WITH_A_NEW_PASSWORD"
+}
+
+### Revoke all sessions for this account.
+POST {{baseUrl}}/auth/logout
+Authorization: Bearer {{accessToken}}

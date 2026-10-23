@@ -1,7 +1,7 @@
 import type { NextFunction, Request, Response } from "express";
-import { env } from "../lib/env";
 import { prisma } from "../lib/db";
 import { badRequest, forbidden, unauthorized } from "../lib/http";
+import { authenticateStaff } from "../services/staff-auth";
 
 export type AdminRole = "moderator" | "support" | "operations" | "finance" | "marketing" | "super";
 
@@ -32,13 +32,12 @@ declare global {
       creatorId?: string;
       adminRole?: AdminRole;
       adminName?: string;
+      staffId?: string;
     }
   }
 }
 
-// Placeholder identity until real auth is added: the client states who it is.
-// Customers send x-customer-id, anonymous shoppers x-guest-id, creators x-creator-id,
-// staff x-admin-role (+ optional x-admin-name). Staff surfaces also need x-staff-key.
+// Shopper identity remains separate from verified staff authentication.
 export function identify(req: Request, _res: Response, next: NextFunction) {
   const header = (name: string) => {
     const value = req.header(name);
@@ -49,9 +48,6 @@ export function identify(req: Request, _res: Response, next: NextFunction) {
   req.customerId = customer;
   req.ownerId = customer ?? (guest ? `guest:${guest}` : undefined);
   req.creatorId = header("x-creator-id");
-  const role = header("x-admin-role");
-  req.adminRole = role && (ADMIN_ROLES as string[]).includes(role) ? (role as AdminRole) : undefined;
-  req.adminName = header("x-admin-name");
   next();
 }
 
@@ -67,15 +63,24 @@ export async function needCustomer(req: Request, _res: Response, next: NextFunct
   next();
 }
 
-export function staffGate(req: Request, _res: Response, next: NextFunction) {
-  if (env.staffKey && req.header("x-staff-key") !== env.staffKey) {
-    return next(unauthorized("Staff key missing or wrong"));
+export async function staffGate(req: Request, _res: Response, next: NextFunction) {
+  const authorization = req.header("authorization");
+  const match = authorization?.match(/^Bearer ([^\s]+)$/i);
+  if (!match) return next(unauthorized("Sign in with a staff account"));
+  try {
+    const user = await authenticateStaff(match[1]);
+    req.staffId = user.id;
+    req.adminRole = user.role === "creator" ? undefined : user.role;
+    req.adminName = user.name;
+    req.creatorId = user.creatorId ?? undefined;
+    next();
+  } catch (error) {
+    next(error);
   }
-  next();
 }
 
 export async function needCreator(req: Request, _res: Response, next: NextFunction) {
-  if (!req.creatorId) return next(unauthorized("Send x-creator-id"));
+  if (!req.creatorId) return next(unauthorized("This staff account is not linked to a creator"));
   const artist = await prisma.artist.findUnique({ where: { id: req.creatorId }, select: { id: true, suspended: true } });
   if (!artist) return next(unauthorized("Unknown creator"));
   if (artist.suspended) return next(forbidden("This studio is suspended"));
@@ -84,7 +89,7 @@ export async function needCreator(req: Request, _res: Response, next: NextFuncti
 
 export function needAdmin(desk: string) {
   return (req: Request, _res: Response, next: NextFunction) => {
-    if (!req.adminRole) return next(unauthorized("Send x-admin-role"));
+    if (!req.staffId || !req.adminRole) return next(unauthorized("Sign in with an admin account"));
     if (!canAccess(req.adminRole, desk)) return next(forbidden(`The ${req.adminRole} role does not open ${desk || "this desk"}`));
     next();
   };

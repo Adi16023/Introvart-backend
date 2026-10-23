@@ -2,11 +2,11 @@ import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/db";
 import { notFound, param, parse } from "../lib/http";
-import { staffGate } from "../lib/identity";
+import { needAdmin, staffGate } from "../lib/identity";
 import { FLOW, setJobStatus } from "../services/jobs";
 
 export const fulfilRouter = Router();
-fulfilRouter.use(staffGate);
+fulfilRouter.use(staffGate, needAdmin("print-jobs"));
 
 const OPEN = ["dispatched", "reprint", "cancelled"];
 

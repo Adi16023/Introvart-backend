@@ -17,8 +17,6 @@ services:
         sync: false
       - key: DIRECT_URL # Neon direct connection string, used for migrations
         sync: false
-      - key: STAFF_API_KEY # shared secret for the creator, admin and fulfil surfaces
-        generateValue: true
       - key: CORS_ORIGINS # comma separated, e.g. https://introvart.in,https://admin.introvart.in
         sync: false
       - key: S3_BUCKET
