@@ -1,0 +1,504 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ───────── People ─────────
+
+model Artist {
+  id                String    @id
+  slug              String    @unique
+  name              String
+  city              String    @default("")
+  bio               String    @default("")
+  cover             String    @default("")
+  portrait          String    @default("")
+  verified          Boolean   @default(false)
+  styles            String[]
+  social            String    @default("")
+  kyc               String    @default("pending") // pending | verified | expired
+  gst               String?
+  pan               String    @default("")
+  bank              String    @default("")
+  ifsc              String    @default("")
+  commissionEnabled Boolean   @default(false)
+  mediums           String[]
+  priceFrom         Int       @default(0)
+  turnaround        String    @default("")
+  slots             Int       @default(0)
+  royaltyRate       Float     @default(0.15)
+  commissionRate    Float     @default(0.2)
+  accountType       String    @default("Individual")
+  email             String?
+  phone             String?
+  suspended         Boolean   @default(false)
+  boostedUntil      DateTime?
+  createdAt         DateTime  @default(now())
+
+  artworks    Artwork[]
+  commissions Commission[]
+  payouts     Payout[]
+  coupons     Coupon[]
+  promotions  Promotion[]
+}
+
+model Customer {
+  id        String   @id
+  name      String
+  email     String   @default("")
+  phone     String   @default("")
+  city      String   @default("")
+  risk      String?
+  credit    Int      @default(0)
+  referral  String   @default("")
+  createdAt DateTime @default(now())
+
+  addresses Address[]
+
+  @@index([phone])
+  @@index([email])
+}
+
+model Address {
+  id         String   @id
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  name       String
+  phone      String
+  line       String
+  city       String
+  state      String
+  pincode    String
+  label      String   @default("Home")
+  createdAt  DateTime @default(now())
+
+  @@index([customerId])
+}
+
+// ───────── Catalogue ─────────
+
+model Artwork {
+  id              String   @id
+  slug            String   @unique
+  title           String
+  artistId        String
+  artist          Artist   @relation(fields: [artistId], references: [id])
+  story           String   @default("")
+  image           String
+  roomImage       String   @default("")
+  category        String   @default("")
+  colours         String[]
+  rooms           String[]
+  occasions       String[]
+  orientation     String   @default("portrait")
+  style           String   @default("")
+  fulfilment      String // platform_pod | seller_fulfilled | custom_print | personalized | original | commission
+  priceFactor     Float    @default(1)
+  basePrice       Int      @default(0)
+  royaltyRate     Float    @default(0.15)
+  rating          Float    @default(0)
+  reviewCount     Int      @default(0)
+  stock           Int?
+  status          String   @default("draft") // draft | submitted | changes_required | approved | rejected | suspended
+  moderatorNote   String?
+  personalization Json?
+  tags            String[]
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  reviews Review[]
+
+  @@index([artistId, status])
+  @@index([status])
+}
+
+model Review {
+  id        String   @id
+  artworkId String
+  artwork   Artwork  @relation(fields: [artworkId], references: [id], onDelete: Cascade)
+  ownerId   String?
+  author    String
+  rating    Int
+  text      String
+  photo     String?
+  status    String   @default("pending") // pending | approved | rejected
+  helpful   Int      @default(0)
+  verified  Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  votes ReviewVote[]
+
+  @@index([artworkId, status])
+}
+
+model ReviewVote {
+  reviewId String
+  review   Review @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  ownerId  String
+
+  @@id([reviewId, ownerId])
+}
+
+model Collection {
+  slug  String   @id
+  title String
+  lede  String   @default("")
+  ids   String[]
+  sort  Int      @default(0)
+}
+
+model Occasion {
+  slug  String @id
+  title String
+  lede  String @default("")
+  sort  Int    @default(0)
+}
+
+model Banner {
+  id       String  @id
+  eyebrow  String  @default("")
+  title    String
+  subtitle String  @default("")
+  href     String  @default("/")
+  image    String  @default("")
+  active   Boolean @default(true)
+  sort     Int     @default(0)
+}
+
+model Post {
+  slug      String   @id
+  title     String
+  lede      String   @default("")
+  body      String   @default("")
+  published Boolean  @default(true)
+  createdAt DateTime @default(now())
+}
+
+model Policy {
+  slug  String @id
+  title String
+  body  String
+}
+
+// Single-row table (id = 1) holding pricing rules and platform settings.
+model Config {
+  id                 Int      @id @default(1)
+  taxRate            Float    @default(0.12)
+  freeShippingOver   Int      @default(2999)
+  standardShipping   Int      @default(149)
+  expressShipping    Int      @default(349)
+  codLimit           Int      @default(5000)
+  personalizationFee Int      @default(250)
+  sizes              Json
+  materials          Json
+  frames             Json
+  colours            String[]
+  rooms              String[]
+  capacity           Int      @default(80)
+  holidays           String   @default("")
+  partnerName        String   @default("")
+  updatedAt          DateTime @updatedAt
+}
+
+model Coupon {
+  code       String   @id
+  label      String
+  kind       String // percent | flat | shipping
+  value      Int
+  min        Int      @default(0)
+  active     Boolean  @default(true)
+  usageLimit Int?
+  used       Int      @default(0)
+  artistId   String?
+  artist     Artist?  @relation(fields: [artistId], references: [id])
+  createdAt  DateTime @default(now())
+}
+
+// ───────── Shopper state (customer id or guest id) ─────────
+
+model CartItem {
+  id              String   @id
+  ownerId         String
+  artworkId       String?
+  title           String
+  artistName      String
+  image           String
+  fulfilment      String
+  sizeId          String
+  materialId      String
+  frameId         String
+  quantity        Int      @default(1)
+  personalization Json?
+  note            String?
+  gift            Boolean  @default(false)
+  giftMessage     String   @default("")
+  createdAt       DateTime @default(now())
+
+  @@index([ownerId])
+}
+
+model WishlistItem {
+  ownerId   String
+  artworkId String
+  createdAt DateTime @default(now())
+
+  @@id([ownerId, artworkId])
+}
+
+model Follow {
+  ownerId   String
+  artistId  String
+  createdAt DateTime @default(now())
+
+  @@id([ownerId, artistId])
+}
+
+model RecentView {
+  ownerId   String
+  artworkId String
+  at        DateTime @default(now())
+
+  @@id([ownerId, artworkId])
+}
+
+model SearchLog {
+  id        Int      @id @default(autoincrement())
+  ownerId   String?
+  query     String
+  results   Int      @default(0)
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+}
+
+model SavedDesign {
+  id        String   @id
+  ownerId   String
+  title     String
+  image     String
+  kind      String
+  detail    String
+  createdAt DateTime @default(now())
+
+  @@index([ownerId])
+}
+
+// ───────── Orders ─────────
+
+model Order {
+  id             String   @id
+  ownerId        String?
+  customerId     String
+  customerName   String
+  email          String
+  placedAt       String // display date, e.g. "12 Sep 2026"
+  createdAt      DateTime @default(now())
+  address        Json
+  delivery       String   @default("standard")
+  paymentMethod  String
+  paymentStatus  String   @default("pending") // pending | paid | failed | cod | refunded | cancelled
+  coupon         String?
+  discount       Int      @default(0)
+  shipping       Int      @default(0)
+  giftCardCode   String?
+  giftCardAmount Int      @default(0)
+  creditUsed     Int      @default(0)
+  subtotal       Int      @default(0)
+  gst            Int      @default(0)
+  payable        Int      @default(0)
+  refunded       Int      @default(0)
+  gstInvoice     Boolean  @default(true)
+  stockReserved  Boolean  @default(false)
+  settled        Boolean  @default(false) // gift card / credit / coupon already redeemed
+
+  items   OrderItem[]
+  jobs    PrintJob[]
+  returns ReturnCase[]
+
+  @@index([customerId])
+  @@index([createdAt])
+}
+
+model OrderItem {
+  id              String    @id
+  orderId         String
+  order           Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  artworkId       String?
+  title           String
+  artistName      String
+  image           String
+  fulfilment      String
+  sizeLabel       String
+  materialLabel   String
+  frameLabel      String
+  quantity        Int
+  unitPrice       Int
+  status          String // pending_payment | confirmed | accepted | in_production | qc | packed | shipped | delivered | return_requested | refunded | cancelled
+  gift            Boolean   @default(false)
+  giftMessage     String    @default("")
+  creatorId       String?
+  personalization Json?
+  awb             String?
+  deliveredAt     DateTime?
+
+  @@index([orderId])
+  @@index([creatorId])
+}
+
+model PrintJob {
+  id        String   @id
+  orderId   String
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  itemId    String
+  title     String
+  image     String
+  spec      String
+  quantity  Int
+  status    String   @default("new") // new | accepted | printing | framing | qc | packing | ready | dispatched | reprint | cancelled
+  priority  String   @default("normal")
+  due       String
+  defect    String?
+  giftSlip  Boolean  @default(false)
+  awb       String?
+  ndr       String   @default("clear") // clear | ndr | rto
+  ndrNote   String?
+  createdAt DateTime @default(now())
+
+  @@index([status])
+  @@index([orderId])
+}
+
+model ReturnCase {
+  id        String   @id
+  orderId   String
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  itemId    String?
+  itemTitle String
+  reason    String
+  type      String // refund | replacement | reprint
+  status    String   @default("opened")
+  evidence  String   @default("")
+  photos    String[] @default([])
+  createdAt DateTime @default(now())
+
+  @@index([orderId])
+}
+
+// Every file stored in the bucket is registered here; media fields elsewhere may only point at these.
+model Upload {
+  key         String   @id
+  kind        String // artwork | creator-profile | cms | custom-print | review | return | commission
+  ownerId     String // customer id, guest:<id>, creator:<id> or admin
+  contentType String
+  size        Int
+  createdAt   DateTime @default(now())
+
+  @@index([ownerId])
+}
+
+// ───────── Money ─────────
+
+model GiftCard {
+  id        String   @id
+  code      String   @unique
+  amount    Int
+  balance   Int
+  from      String
+  to        String
+  email     String
+  message   String   @default("")
+  theme     String
+  sendOn    String   @default("Now")
+  status    String   @default("active") // active | void | scheduled
+  createdAt DateTime @default(now())
+}
+
+model Payout {
+  id          String    @id
+  artistId    String
+  artist      Artist    @relation(fields: [artistId], references: [id])
+  amount      Int
+  status      String    @default("requested") // requested | released | rejected
+  note        String?
+  requestedAt DateTime  @default(now())
+  releasedAt  DateTime?
+
+  @@index([artistId])
+}
+
+model Promotion {
+  id        String   @id
+  artistId  String
+  artist    Artist   @relation(fields: [artistId], references: [id])
+  days      Int
+  status    String   @default("pending") // pending | approved | rejected
+  createdAt DateTime @default(now())
+}
+
+// ───────── Services ─────────
+
+model Commission {
+  id            String   @id
+  ownerId       String?
+  customerName  String
+  artistId      String
+  artist        Artist   @relation(fields: [artistId], references: [id])
+  medium        String
+  size          String
+  style         String   @default("")
+  notes         String   @default("")
+  budget        Int      @default(0)
+  deadline      String   @default("")
+  status        String   @default("requested") // requested | quoted | accepted | in_progress | revision | shipped | approved_final | declined | cancelled
+  quote         Json?
+  progress      Json     @default("[]")
+  references    String[] @default([])
+  paid          Int      @default(0)
+  revisionsUsed Int      @default(0)
+  createdAt     DateTime @default(now())
+
+  @@index([ownerId])
+  @@index([artistId])
+}
+
+model Ticket {
+  id        String   @id
+  ownerId   String?
+  from      String
+  subject   String
+  orderId   String?
+  status    String   @default("open") // open | pending | resolved
+  channel   String   @default("Site")
+  source    String   @default("customer") // customer | creator
+  body      String
+  replies   Json     @default("[]")
+  createdAt DateTime @default(now())
+}
+
+model B2BLead {
+  id        String   @id
+  company   String
+  contact   String
+  email     String?
+  city      String
+  brief     String
+  quantity  Int
+  budget    Int
+  status    String   @default("new")
+  quote     Json?
+  createdAt DateTime @default(now())
+}
+
+model AuditLog {
+  id     String   @id
+  at     DateTime @default(now())
+  actor  String
+  action String
+
+  @@index([at])
+}

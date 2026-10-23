@@ -1,0 +1,35 @@
+services:
+  - type: web
+    name: introvart-backend
+    runtime: node
+    region: ohio # same region as the Neon project (us-east-2) to keep database latency low
+    plan: starter # the free plan sleeps after 15 minutes idle, which is not suitable for checkout
+    buildCommand: npm ci --include=dev && npx prisma migrate deploy && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: 22
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL # Neon pooled connection string (host contains -pooler), ends with ?sslmode=require&pgbouncer=true
+        sync: false
+      - key: DIRECT_URL # Neon direct connection string, used for migrations
+        sync: false
+      - key: STAFF_API_KEY # shared secret for the creator, admin and fulfil surfaces
+        generateValue: true
+      - key: CORS_ORIGINS # comma separated, e.g. https://introvart.in,https://admin.introvart.in
+        sync: false
+      - key: S3_BUCKET
+        value: products
+      - key: AWS_ENDPOINT_URL_S3
+        sync: false
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: AWS_REGION
+        value: us-east-2
+      - key: API_PUBLIC_URL # set to the final public URL, e.g. https://api.introvart.in
+        sync: false
