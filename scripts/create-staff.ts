@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { randomBytes } from "node:crypto";
 import { createInterface } from "node:readline/promises";
 import { Writable } from "node:stream";
 import { parseArgs } from "node:util";
@@ -13,6 +14,7 @@ async function main() {
       name: { type: "string" },
       role: { type: "string", default: "super" },
       "creator-id": { type: "string" },
+      "generate-password": { type: "boolean", default: false },
     },
   });
   const account = z.object({
@@ -21,25 +23,31 @@ async function main() {
     role: z.enum(["moderator", "support", "operations", "finance", "marketing", "super", "creator"]),
     "creator-id": z.string().min(1).optional(),
   }).parse(values);
-  if (!process.stdin.isTTY) throw new Error("Run this command in an interactive terminal to enter the password securely");
+  const generatedPassword = values["generate-password"] === true;
+  if (!generatedPassword && !process.stdin.isTTY) throw new Error("Run this command in an interactive terminal to enter the password securely");
   if (account.role === "creator" && !account["creator-id"]) throw new Error("--creator-id is required for a creator account");
   if (account["creator-id"] && !await prisma.artist.findUnique({ where: { id: account["creator-id"] }, select: { id: true } })) {
     throw new Error("Unknown creator ID");
   }
-  const output = new Writable({ write(_chunk, _encoding, done) { done(); } });
-  const input = createInterface({ input: process.stdin, output, terminal: true });
   let password: string;
-  try {
-    process.stdout.write("Password (12-128 characters; input hidden): ");
-    password = await input.question("");
-    process.stdout.write("\nConfirm password (input hidden): ");
-    const confirmation = await input.question("");
-    process.stdout.write("\n");
-    z.string().min(12).max(128).parse(password);
-    if (password !== confirmation) throw new Error("Passwords do not match");
-  } finally {
-    input.close();
+  if (generatedPassword) {
+    password = randomBytes(32).toString("base64url");
+  } else {
+    const output = new Writable({ write(_chunk, _encoding, done) { done(); } });
+    const input = createInterface({ input: process.stdin, output, terminal: true });
+    try {
+      process.stdout.write("Password (12-128 characters; input hidden): ");
+      password = await input.question("");
+      process.stdout.write("\nConfirm password (input hidden): ");
+      const confirmation = await input.question("");
+      process.stdout.write("\n");
+      z.string().min(12).max(128).parse(password);
+      if (password !== confirmation) throw new Error("Passwords do not match");
+    } finally {
+      input.close();
+    }
   }
+  z.string().min(12).max(128).parse(password);
   const user = await prisma.staffUser.create({
     data: {
       email: account.email,
@@ -51,6 +59,7 @@ async function main() {
     select: { id: true, email: true, role: true },
   });
   console.log("Staff account created:", user);
+  if (generatedPassword) console.log("Initial password (shown once):", password);
 }
 
 main().catch((error: unknown) => {
