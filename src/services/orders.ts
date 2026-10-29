@@ -3,6 +3,7 @@ import { json, prisma, transaction, type Tx } from "../lib/db";
 import { badRequest, conflict, displayDate, notFound, uid } from "../lib/http";
 import { computeTotals } from "./cart";
 import { frameOf, loadConfig, materialOf, pincodeInfo, PRESS_TYPES, sizeOf } from "./pricing";
+import { variantLabel } from "./product-variants";
 
 export type AddressInput = {
   id?: string;
@@ -71,6 +72,16 @@ export async function placeOrder(input: PlaceOrderInput) {
 
   await transaction(async (tx) => {
     for (const line of lines) {
+      if (line.variant?.inventoryTracker) {
+        const reserved = await tx.productVariant.updateMany({
+          where: {
+            id: line.variant.id,
+            ...(line.variant.inventoryPolicy === "continue" ? {} : { inventoryQuantity: { gte: line.quantity } }),
+          },
+          data: { inventoryQuantity: { decrement: line.quantity } },
+        });
+        if (!reserved.count) throw conflict(`${line.title} just sold out`);
+      }
       if (line.artwork && line.artwork.stock !== null) {
         const reserved = await tx.artwork.updateMany({
           where: { id: line.artwork.id, stock: { gte: line.quantity } },
@@ -107,13 +118,15 @@ export async function placeOrder(input: PlaceOrderInput) {
           create: lines.map((line) => ({
             id: uid("OI"),
             artworkId: line.artworkId,
+            variantId: line.variantId,
+            sku: line.variant?.sku ?? "",
             title: line.title,
             artistName: line.artistName,
             image: line.image,
             fulfilment: line.fulfilment,
-            sizeLabel: sizeOf(config, line.sizeId).label,
-            materialLabel: materialOf(config, line.materialId).label,
-            frameLabel: frameOf(config, line.frameId).label,
+            sizeLabel: line.variant ? variantLabel(line.variant) : sizeOf(config, line.sizeId).label,
+            materialLabel: line.variant ? "As listed" : materialOf(config, line.materialId).label,
+            frameLabel: line.variant ? "As listed" : frameOf(config, line.frameId).label,
             quantity: line.quantity,
             unitPrice: line.unitPrice,
             status: "pending_payment",
@@ -177,6 +190,10 @@ export async function settleOrder(tx: Tx, orderId: string) {
 async function releaseStock(tx: Tx, order: Order & { items: OrderItem[] }) {
   if (!order.stockReserved) return;
   for (const item of order.items) {
+    if (item.variantId) await tx.productVariant.updateMany({
+      where: { id: item.variantId, inventoryTracker: { not: "" } },
+      data: { inventoryQuantity: { increment: item.quantity } },
+    });
     if (!item.artworkId) continue;
     await tx.artwork.updateMany({ where: { id: item.artworkId, stock: { not: null } }, data: { stock: { increment: item.quantity } } });
   }
@@ -186,6 +203,17 @@ async function releaseStock(tx: Tx, order: Order & { items: OrderItem[] }) {
 async function reserveStock(tx: Tx, order: Order & { items: OrderItem[] }) {
   if (order.stockReserved) return;
   for (const item of order.items) {
+    if (item.variantId) {
+      const variant = await tx.productVariant.findUnique({ where: { id: item.variantId } });
+      if (!variant) throw conflict(`The variant of ${item.title} is no longer available`);
+      if (variant.inventoryTracker) {
+        const taken = await tx.productVariant.updateMany({
+          where: { id: variant.id, ...(variant.inventoryPolicy === "continue" ? {} : { inventoryQuantity: { gte: item.quantity } }) },
+          data: { inventoryQuantity: { decrement: item.quantity } },
+        });
+        if (!taken.count) throw conflict(`${item.title} sold out while payment was pending`);
+      }
+    }
     if (!item.artworkId) continue;
     const artwork = await tx.artwork.findUnique({ where: { id: item.artworkId }, select: { stock: true, title: true } });
     if (artwork && artwork.stock !== null) {

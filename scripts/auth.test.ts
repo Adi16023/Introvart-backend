@@ -246,6 +246,10 @@ test("staff JWT authentication and authorization", async (t) => {
     const token = (await issueStaffToken(user)).accessToken;
     assert.equal((await call("/auth/staff", { headers: bearer(token) })).status, 403);
     assert.equal((await call("/auth/staff", { method: "POST", headers: bearer(token) })).status, 403);
+    assert.equal((await call("/admin/products")).status, 401);
+    assert.equal((await call("/admin/products", { headers: bearer(token) })).status, 403);
+    assert.equal((await call("/admin/products", { method: "POST", headers: bearer(token) })).status, 403);
+    assert.equal((await call("/admin/products/import", { method: "POST", headers: bearer(token) })).status, 403);
     let status = 0;
     for (let attempt = 0; attempt < 11 && status !== 429; attempt += 1) {
       status = (await login({ email: user.email, password: "incorrect" })).status;

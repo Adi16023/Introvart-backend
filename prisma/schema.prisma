@@ -84,7 +84,7 @@ model Customer {
   phone     String   @default("")
   city      String   @default("")
   risk      String?
-  credit    Int      @default(0)
+  credit    Float    @default(0)
   referral  String   @default("")
   createdAt DateTime @default(now())
 
@@ -138,13 +138,69 @@ model Artwork {
   moderatorNote   String?
   personalization Json?
   tags            String[]
+  vendor          String   @default("")
+  productType     String   @default("")
+  descriptionHtml String   @default("")
+  published       Boolean  @default(true)
+  catalogStatus   String   @default("active")
+  giftCard        Boolean  @default(false)
+  seoTitle        String   @default("")
+  seoDescription  String   @default("")
+  options         Json     @default("[]")
+  metafields      Json     @default("{}")
+  googleShopping  Json     @default("{}")
+  sourceRows      Json     @default("[]")
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
   reviews Review[]
+  variants ProductVariant[]
+  images   ProductImage[]
 
   @@index([artistId, status])
   @@index([status])
+  @@map("products")
+}
+
+model ProductVariant {
+  id                 String  @id @default(cuid())
+  productId          String
+  product            Artwork @relation(fields: [productId], references: [id], onDelete: Cascade)
+  optionValues       String[]
+  sku                String  @default("")
+  barcode            String  @default("")
+  price              Float
+  compareAtPrice     Float?
+  inventoryTracker   String  @default("")
+  inventoryQuantity  Int     @default(0)
+  inventoryPolicy    String  @default("deny")
+  fulfillmentService String  @default("manual")
+  requiresShipping   Boolean @default(true)
+  taxable            Boolean @default(true)
+  grams              Float   @default(0)
+  weightUnit         String  @default("kg")
+  image              String  @default("")
+  taxCode            String  @default("")
+  costPerItem        Float?
+  unitPriceMeasure   Json    @default("{}")
+  packedLength       Float?
+  packedWidth        Float?
+  packedHeight       Float?
+  packedDimensionUnit String @default("")
+  sort               Int     @default(0)
+
+  @@index([productId])
+}
+
+model ProductImage {
+  id        String  @id @default(cuid())
+  productId String
+  product   Artwork @relation(fields: [productId], references: [id], onDelete: Cascade)
+  src       String
+  position  Int     @default(1)
+  alt       String  @default("")
+
+  @@unique([productId, position])
 }
 
 model Review {
@@ -255,6 +311,7 @@ model CartItem {
   id              String   @id
   ownerId         String
   artworkId       String?
+  variantId       String?
   title           String
   artistName      String
   image           String
@@ -336,12 +393,12 @@ model Order {
   discount       Int      @default(0)
   shipping       Int      @default(0)
   giftCardCode   String?
-  giftCardAmount Int      @default(0)
-  creditUsed     Int      @default(0)
-  subtotal       Int      @default(0)
+  giftCardAmount Float    @default(0)
+  creditUsed     Float    @default(0)
+  subtotal       Float    @default(0)
   gst            Int      @default(0)
-  payable        Int      @default(0)
-  refunded       Int      @default(0)
+  payable        Float    @default(0)
+  refunded       Float    @default(0)
   gstInvoice     Boolean  @default(true)
   stockReserved  Boolean  @default(false)
   settled        Boolean  @default(false) // gift card / credit / coupon already redeemed
@@ -359,6 +416,8 @@ model OrderItem {
   orderId         String
   order           Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
   artworkId       String?
+  variantId       String?
+  sku             String    @default("")
   title           String
   artistName      String
   image           String
@@ -367,7 +426,7 @@ model OrderItem {
   materialLabel   String
   frameLabel      String
   quantity        Int
-  unitPrice       Int
+  unitPrice       Float
   status          String // pending_payment | confirmed | accepted | in_production | qc | packed | shipped | delivered | return_requested | refunded | cancelled
   gift            Boolean   @default(false)
   giftMessage     String    @default("")
@@ -437,7 +496,7 @@ model GiftCard {
   id        String   @id
   code      String   @unique
   amount    Int
-  balance   Int
+  balance   Float
   from      String
   to        String
   email     String

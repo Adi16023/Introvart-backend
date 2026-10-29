@@ -14,7 +14,7 @@ export const adminRouter = Router();
 adminRouter.use(staffGate);
 
 const DESKS = [
-  "", "customers", "creators", "moderation", "catalogue", "pricing", "orders", "print-jobs", "shipping", "returns", "payments", "payouts",
+  "", "customers", "creators", "moderation", "catalogue", "products", "pricing", "orders", "print-jobs", "shipping", "returns", "payments", "payouts",
   "finance", "cms", "promotions", "reviews", "support", "copyright", "fraud", "b2b", "roles", "audit", "settings", "analytics", "commissions", "gift-cards",
 ];
 

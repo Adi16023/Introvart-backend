@@ -1,12 +1,15 @@
-import type { CartItem, Artwork } from "@prisma/client";
+import type { CartItem, Artwork, ProductVariant } from "@prisma/client";
 import type { Db } from "../lib/db";
 import { couponDiscount, pincodeInfo, unitPrice, type PricingConfig } from "./pricing";
+import { variantAvailable, variantLabel } from "./product-variants";
 
 export type PricedLine = CartItem & {
   unitPrice: number;
   lineTotal: number;
   artwork: Pick<Artwork, "id" | "slug" | "stock" | "status" | "artistId" | "fulfilment" | "personalization"> | null;
   problem: string | null;
+  variant: ProductVariant | null;
+  variantTitle: string | null;
 };
 
 export async function loadPricedCart(db: Db, ownerId: string, config: PricingConfig) {
@@ -15,16 +18,17 @@ export async function loadPricedCart(db: Db, ownerId: string, config: PricingCon
   const artworks = ids.length
     ? await db.artwork.findMany({
         where: { id: { in: ids } },
-        select: { id: true, slug: true, stock: true, status: true, artistId: true, fulfilment: true, basePrice: true, priceFactor: true, personalization: true },
+        select: { id: true, slug: true, stock: true, status: true, artistId: true, fulfilment: true, basePrice: true, priceFactor: true, personalization: true, variants: true },
       })
     : [];
   const byId = new Map(artworks.map((artwork) => [artwork.id, artwork]));
 
   const lines: PricedLine[] = items.map((item) => {
     const artwork = item.artworkId ? byId.get(item.artworkId) ?? null : null;
+    const variant = artwork?.variants.find((entry) => entry.id === item.variantId) ?? null;
     // Prices always come from the catalogue, never from the client.
     const fulfilment = artwork ? artwork.fulfilment : item.fulfilment;
-    const price = unitPrice(config, {
+    const price = variant?.price ?? unitPrice(config, {
       fulfilment,
       basePrice: artwork?.basePrice ?? 0,
       priceFactor: artwork?.priceFactor ?? 1,
@@ -34,6 +38,9 @@ export async function loadPricedCart(db: Db, ownerId: string, config: PricingCon
     });
     let problem: string | null = null;
     if (item.artworkId && (!artwork || artwork.status !== "approved")) problem = `${item.title} is no longer available`;
+    else if (artwork?.variants.length && !variant) problem = `Choose a valid variant for ${item.title}`;
+    else if (item.variantId && !variant) problem = `The selected variant of ${item.title} is no longer available`;
+    else if (variant && !variantAvailable(variant, item.quantity)) problem = `The selected variant of ${item.title} has insufficient stock`;
     else if (artwork && artwork.stock !== null && artwork.stock < item.quantity) {
       problem = artwork.stock === 0 ? `${item.title} is sold out` : `Only ${artwork.stock} of ${item.title} left`;
     }
@@ -41,7 +48,9 @@ export async function loadPricedCart(db: Db, ownerId: string, config: PricingCon
       ...item,
       fulfilment,
       unitPrice: price,
-      lineTotal: price * item.quantity,
+      lineTotal: Math.round(price * item.quantity * 100) / 100,
+      variant,
+      variantTitle: variant ? variantLabel(variant) : null,
       artwork: artwork
         ? { id: artwork.id, slug: artwork.slug, stock: artwork.stock, status: artwork.status, artistId: artwork.artistId, fulfilment: artwork.fulfilment, personalization: artwork.personalization }
         : null,
@@ -49,7 +58,7 @@ export async function loadPricedCart(db: Db, ownerId: string, config: PricingCon
     };
   });
 
-  return { lines, subtotal: lines.reduce((sum, line) => sum + line.lineTotal, 0) };
+  return { lines, subtotal: Math.round(lines.reduce((sum, line) => sum + line.lineTotal, 0) * 100) / 100 };
 }
 
 export type TotalsInput = {

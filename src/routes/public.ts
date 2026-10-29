@@ -5,6 +5,8 @@ import { notFound, param, parse, uid } from "../lib/http";
 import { artworksByIds, listArtworks, matches, present, type ArtworkWithArtist } from "../services/catalog";
 import { balanceOf, issueGiftCard } from "../services/giftcards";
 import { fromPrice, loadConfig, pincodeInfo, unitPrice } from "../services/pricing";
+import { productInclude } from "../services/products";
+import { selectedVariant } from "../services/product-variants";
 
 export const publicRouter = Router();
 
@@ -53,8 +55,8 @@ publicRouter.get("/home", async (_req, res) => {
     prisma.collection.findMany({ orderBy: { sort: "asc" } }),
     prisma.occasion.findMany({ orderBy: { sort: "asc" } }),
     prisma.artist.findMany({ where: { verified: true, suspended: false }, take: 6 }),
-    prisma.artwork.findMany({ where: { status: "approved", fulfilment: { not: "commission" } }, orderBy: { rating: "desc" }, take: 8, include: { artist: artistSelect } }),
-    prisma.artwork.findMany({ where: { status: "approved", fulfilment: { not: "commission" } }, orderBy: { createdAt: "desc" }, take: 8, include: { artist: artistSelect } }),
+    prisma.artwork.findMany({ where: { status: "approved", fulfilment: { not: "commission" } }, orderBy: { rating: "desc" }, take: 8, include: { artist: artistSelect, ...productInclude } }),
+    prisma.artwork.findMany({ where: { status: "approved", fulfilment: { not: "commission" } }, orderBy: { createdAt: "desc" }, take: 8, include: { artist: artistSelect, ...productInclude } }),
   ]);
   res.json({
     banners,
@@ -71,28 +73,29 @@ publicRouter.get("/offers", async (_req, res) => {
   res.json(coupons.filter((c) => c.usageLimit === null || c.used < c.usageLimit).map(({ code, label, kind, value, min }) => ({ code, label, kind, value, min })));
 });
 
-publicRouter.get("/artworks", async (req, res) => {
+publicRouter.get(["/artworks", "/products"], async (req, res) => {
   res.json(await listArtworks(parse(catalogQuery, req.query)));
 });
 
-publicRouter.get("/artworks/:slug", async (req, res) => {
+publicRouter.get(["/artworks/:slug", "/products/:slug"], async (req, res) => {
   const config = await loadConfig();
   const found = await prisma.artwork.findFirst({
     where: { OR: [{ slug: param(req, "slug") }, { id: param(req, "slug") }], status: "approved" },
-    include: { artist: true },
+    include: { artist: true, ...productInclude },
   });
   if (!found) throw notFound("Artwork not found");
   const [reviews, related] = await Promise.all([
     prisma.review.findMany({ where: { artworkId: found.id, status: "approved" }, orderBy: [{ helpful: "desc" }, { createdAt: "desc" }], take: 30 }),
     prisma.artwork.findMany({
       where: { status: "approved", id: { not: found.id }, fulfilment: { not: "commission" }, OR: [{ artistId: found.artistId }, { category: found.category }] },
-      include: { artist: artistSelect },
+      include: { artist: artistSelect, ...productInclude },
       take: 4,
     }),
   ]);
-  const { artist, ...artwork } = found;
+  const { artist, sourceRows: _source, ...artwork } = found;
   res.json({
     ...artwork,
+    productOptions: artwork.options,
     fromPrice: fromPrice(config, artwork),
     artist: publicArtist(artist),
     reviews: reviews.map(({ ownerId: _o, ...review }) => review),
@@ -103,6 +106,7 @@ publicRouter.get("/artworks/:slug", async (req, res) => {
 
 const quoteBody = z.object({
   artworkId: z.string().optional(),
+  variantId: z.string().optional(),
   fulfilment: z.string().optional(),
   sizeId: z.string().default("a3"),
   materialId: z.string().default("matte"),
@@ -113,9 +117,10 @@ const quoteBody = z.object({
 publicRouter.post("/pricing/quote", async (req, res) => {
   const body = parse(quoteBody, req.body);
   const config = await loadConfig();
-  const artwork = body.artworkId ? await prisma.artwork.findUnique({ where: { id: body.artworkId } }) : null;
+  const artwork = body.artworkId ? await prisma.artwork.findUnique({ where: { id: body.artworkId }, include: { variants: true } }) : null;
   if (body.artworkId && !artwork) throw notFound("Artwork not found");
-  const price = unitPrice(config, {
+  const variant = selectedVariant(artwork?.variants ?? [], body.variantId);
+  const price = variant?.price ?? unitPrice(config, {
     fulfilment: artwork?.fulfilment ?? body.fulfilment ?? "custom_print",
     basePrice: artwork?.basePrice ?? 0,
     priceFactor: artwork?.priceFactor ?? 1,
@@ -123,7 +128,7 @@ publicRouter.post("/pricing/quote", async (req, res) => {
     materialId: body.materialId,
     frameId: body.frameId,
   });
-  res.json({ unitPrice: price, quantity: body.quantity, total: price * body.quantity });
+  res.json({ unitPrice: price, quantity: body.quantity, total: Math.round(price * body.quantity * 100) / 100 });
 });
 
 publicRouter.get("/pincode/:pin", (req, res) => {

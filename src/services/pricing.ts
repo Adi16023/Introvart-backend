@@ -66,7 +66,8 @@ export function unitPrice(
   return Math.round(size * material * input.priceFactor + frame + extra);
 }
 
-export function fromPrice(config: PricingConfig, artwork: { fulfilment: string; basePrice: number; priceFactor: number }) {
+export function fromPrice(config: PricingConfig, artwork: { fulfilment: string; basePrice: number; priceFactor: number; variants?: { price: number }[] }) {
+  if (artwork.variants?.length) return Math.min(...artwork.variants.map((variant) => variant.price));
   if (SELLER_TYPES.includes(artwork.fulfilment) || artwork.fulfilment === "commission") return artwork.basePrice;
   return unitPrice(config, {
     fulfilment: artwork.fulfilment,

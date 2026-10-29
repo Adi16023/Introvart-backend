@@ -11,6 +11,8 @@ import { deleteObject } from "../lib/storage";
 import { cancelOrder, getOrder, invoiceOf, placeOrder, recordPayment } from "../services/orders";
 import { loadConfig } from "../services/pricing";
 import { openReturn } from "../services/returns";
+import { selectedVariant, variantAvailable } from "../services/product-variants";
+import type { ProductVariant } from "@prisma/client";
 
 export const shopRouter = Router();
 
@@ -149,6 +151,7 @@ shopRouter.use(["/cart", "/checkout", "/orders", "/me", "/reviews", "/commission
 
 const cartBody = z.object({
   artworkId: z.string().optional(),
+  variantId: z.string().optional(),
   title: z.string().min(1).max(160).optional(),
   artistName: z.string().max(120).optional(),
   image: z.string().min(1).optional(),
@@ -176,9 +179,14 @@ shopRouter.post("/cart/items", async (req, res) => {
   if (!config.frames.some((f) => f.id === body.frameId)) throw badRequest("Unknown frame");
 
   let data: { artworkId: string | null; title: string; artistName: string; image: string; fulfilment: string };
+  let chosenVariant: ProductVariant | null = null;
   if (body.artworkId) {
-    const artwork = await prisma.artwork.findFirst({ where: { id: body.artworkId, status: "approved", artist: { suspended: false } }, include: { artist: true } });
+    const artwork = await prisma.artwork.findFirst({ where: { id: body.artworkId, status: "approved", artist: { suspended: false } }, include: { artist: true, variants: true } });
     if (!artwork) throw notFound("Artwork not available");
+    if (artwork.giftCard) throw badRequest("Purchase gift cards through the gift-card page");
+    const variant = selectedVariant(artwork.variants, body.variantId);
+    chosenVariant = variant;
+    if (variant && !variantAvailable(variant, body.quantity)) throw conflict("The selected variant has insufficient stock");
     if (artwork.fulfilment === "commission") throw badRequest("Commissions are requested, not added to the cart");
     if (artwork.stock !== null && artwork.stock < 1) throw conflict(`${artwork.title} is sold out`);
     if (artwork.fulfilment === "personalized") {
@@ -194,17 +202,20 @@ shopRouter.post("/cart/items", async (req, res) => {
       fulfilment: artwork.fulfilment,
     };
   } else {
+    if (body.variantId) throw badRequest("A variant requires a product");
     if (!body.title || !body.image) throw badRequest("Custom items need a title and an image");
     const image = await resolveOne(req, body.image, ["custom-print"]);
     data = { artworkId: null, title: body.title, artistName: body.artistName ?? "Your photograph", image, fulfilment: "custom_print" };
   }
 
   const candidates = await prisma.cartItem.findMany({
-    where: { ownerId: req.ownerId!, artworkId: data.artworkId, title: data.title, sizeId: body.sizeId, materialId: body.materialId, frameId: body.frameId },
+    where: { ownerId: req.ownerId!, artworkId: data.artworkId, variantId: body.variantId ?? null, title: data.title, sizeId: body.sizeId, materialId: body.materialId, frameId: body.frameId },
   });
   const existing = candidates.find((item) => JSON.stringify(item.personalization ?? {}) === JSON.stringify(body.personalization ?? {}));
   if (existing) {
-    const item = await prisma.cartItem.update({ where: { id: existing.id }, data: { quantity: Math.min(20, existing.quantity + body.quantity) } });
+    const quantity = Math.min(20, existing.quantity + body.quantity);
+    if (chosenVariant && !variantAvailable(chosenVariant, quantity)) throw conflict("The selected variant has insufficient stock");
+    const item = await prisma.cartItem.update({ where: { id: existing.id }, data: { quantity } });
     res.json(item);
     return;
   }
@@ -213,6 +224,7 @@ shopRouter.post("/cart/items", async (req, res) => {
       id: uid("CI"),
       ownerId: req.ownerId!,
       ...data,
+      variantId: body.variantId,
       sizeId: body.sizeId,
       materialId: body.materialId,
       frameId: body.frameId,
