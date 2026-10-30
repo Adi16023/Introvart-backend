@@ -123,7 +123,11 @@ adminContentRouter.patch("/cms/collections/:slug", needAdmin("cms"), async (req,
 });
 
 adminContentRouter.delete("/cms/collections/:slug", needAdmin("cms"), async (req, res) => {
-  await prisma.collection.delete({ where: { slug: param(req, "slug") } });
+  const slug = param(req, "slug");
+  const existing = await prisma.collection.findUnique({ where: { slug } });
+  if (!existing) throw notFound("Collection not found");
+  await prisma.collection.delete({ where: { slug } });
+  await audit(prisma, actorLabel(req), `Deleted collection "${existing.title}"`);
   res.status(204).end();
 });
 
