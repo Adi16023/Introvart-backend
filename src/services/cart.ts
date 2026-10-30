@@ -84,7 +84,18 @@ export async function computeTotals(db: Db, config: PricingConfig, input: Totals
   const couponRow = couponCode
     ? await db.coupon.findFirst({ where: { code: { equals: couponCode, mode: "insensitive" } } })
     : null;
-  const deal = couponDiscount(couponRow, subtotal, shipping);
+  let eligibleSubtotal = subtotal;
+  let alreadyUsedByCustomer = false;
+  if (couponRow?.collectionSlugs.length) {
+    const collections = await db.collection.findMany({ where: { slug: { in: couponRow.collectionSlugs } }, select: { ids: true } });
+    const eligibleIds = new Set(collections.flatMap((collection) => collection.ids));
+    eligibleSubtotal = Math.round(lines.filter((line) => line.productId && eligibleIds.has(line.productId)).reduce((sum, line) => sum + line.lineTotal, 0) * 100) / 100;
+  }
+  if (couponRow?.oncePerCustomer) {
+    const owners = [{ ownerId: input.ownerId }, ...(input.customerId ? [{ customerId: input.customerId }] : [])];
+    alreadyUsedByCustomer = (await db.order.count({ where: { coupon: { equals: couponRow.code, mode: "insensitive" }, settled: true, OR: owners } })) > 0;
+  }
+  const deal = couponDiscount(couponRow, subtotal, shipping, { eligibleSubtotal, alreadyUsedByCustomer });
   const discount = deal.ok ? deal.discount : 0;
   if (deal.ok) shipping = Math.max(0, shipping - deal.shippingOff);
   const after = Math.max(0, subtotal - discount + shipping);

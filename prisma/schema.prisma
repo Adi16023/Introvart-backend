@@ -269,17 +269,29 @@ model MenuConfig {
 }
 
 model Coupon {
-  code       String   @id
-  label      String
-  kind       String // percent | flat | shipping
-  value      Int
-  min        Int      @default(0)
-  active     Boolean  @default(true)
-  usageLimit Int?
-  used       Int      @default(0)
-  artistId   String?
-  artist     Artist?  @relation(fields: [artistId], references: [id])
-  createdAt  DateTime @default(now())
+  code            String    @id
+  label           String
+  kind            String // percent | flat | shipping
+  value           Int
+  min             Int       @default(0)
+  active          Boolean   @default(true)
+  usageLimit      Int?
+  used            Int       @default(0)
+  oncePerCustomer Boolean   @default(false)
+  startsAt        DateTime?
+  endsAt          DateTime?
+  // Empty means the code applies to the whole cart; otherwise only to products in these collections.
+  collectionSlugs String[]  @default([])
+  artistId        String?
+  artist          Artist?   @relation(fields: [artistId], references: [id])
+  createdAt       DateTime  @default(now())
+}
+
+// Key/value store for small storefront settings, such as the announcement bar.
+model SiteSetting {
+  key       String   @id
+  data      Json
+  updatedAt DateTime @updatedAt
 }
 
 // ───────── Shopper state (customer id or guest id) ─────────

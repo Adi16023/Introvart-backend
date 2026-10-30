@@ -92,20 +92,36 @@ export function pincodeInfo(pincode: string) {
   return { ok: true, eta: "5–7 days · standard lane", remote: false };
 }
 
-export type CouponRow = { code: string; label: string; kind: string; value: number; min: number; active: boolean; usageLimit: number | null; used: number };
+export type CouponRow = {
+  code: string; label: string; kind: string; value: number; min: number; active: boolean; usageLimit: number | null; used: number;
+  startsAt?: Date | null; endsAt?: Date | null; oncePerCustomer?: boolean; collectionSlugs?: string[];
+};
 
-export function couponDiscount(coupon: CouponRow | null, subtotal: number, shipping: number) {
-  if (!coupon || !coupon.active || (coupon.usageLimit !== null && coupon.used >= coupon.usageLimit)) {
-    return { ok: false as const, discount: 0, shippingOff: 0, message: "That code is not active" };
-  }
-  if (subtotal < coupon.min) {
-    return { ok: false as const, discount: 0, shippingOff: 0, message: `Add ₹${(coupon.min - subtotal).toLocaleString("en-IN")} more to use ${coupon.code}` };
-  }
+export type CouponContext = {
+  // Cart value the code may discount: the whole subtotal, or only matching products for collection-scoped codes.
+  eligibleSubtotal: number;
+  alreadyUsedByCustomer: boolean;
+  now?: Date;
+};
+
+const rupees = (value: number) => `₹${value.toLocaleString("en-IN")}`;
+
+export function couponDiscount(coupon: CouponRow | null, subtotal: number, shipping: number, context?: CouponContext) {
+  const fail = (message: string) => ({ ok: false as const, discount: 0, shippingOff: 0, message });
+  if (!coupon || !coupon.active || (coupon.usageLimit !== null && coupon.used >= coupon.usageLimit)) return fail("That code is not active");
+  const now = context?.now ?? new Date();
+  if (coupon.startsAt && coupon.startsAt > now) return fail("That code is not active yet");
+  if (coupon.endsAt && coupon.endsAt < now) return fail("That code has expired");
+  if (coupon.oncePerCustomer && context?.alreadyUsedByCustomer) return fail("You have already used this code");
+  const scoped = (coupon.collectionSlugs?.length ?? 0) > 0;
+  const eligible = scoped ? context?.eligibleSubtotal ?? 0 : subtotal;
+  if (scoped && eligible <= 0) return fail("This code applies only to selected collections");
+  if (eligible < coupon.min) return fail(`Add ${rupees(coupon.min - eligible)} more to use ${coupon.code}`);
   if (coupon.kind === "percent") {
-    return { ok: true as const, discount: Math.round(subtotal * (coupon.value / 100)), shippingOff: 0, message: coupon.label };
+    return { ok: true as const, discount: Math.round(eligible * (coupon.value / 100)), shippingOff: 0, message: coupon.label };
   }
   if (coupon.kind === "flat") {
-    return { ok: true as const, discount: Math.min(coupon.value, subtotal), shippingOff: 0, message: coupon.label };
+    return { ok: true as const, discount: Math.min(coupon.value, eligible), shippingOff: 0, message: coupon.label };
   }
   return { ok: true as const, discount: 0, shippingOff: shipping, message: coupon.label };
 }

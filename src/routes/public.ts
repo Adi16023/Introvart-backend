@@ -4,6 +4,7 @@ import { prisma } from "../lib/db";
 import { notFound, param, parse, uid } from "../lib/http";
 import { canonicalMediaUrl } from "../lib/storage";
 import { loadMenu } from "../services/menu";
+import { loadAnnouncement } from "../services/announcement";
 import { productsByIds, listProducts, matches, present, type ProductWithArtist } from "../services/catalog";
 import { balanceOf, issueGiftCard } from "../services/giftcards";
 import { fromPrice, loadConfig, pincodeInfo, unitPrice } from "../services/pricing";
@@ -71,7 +72,15 @@ publicRouter.get("/home", async (_req, res) => {
 });
 
 publicRouter.get("/offers", async (_req, res) => {
-  const coupons = await prisma.coupon.findMany({ where: { active: true, artistId: null }, orderBy: { createdAt: "asc" } });
+  const now = new Date();
+  const coupons = await prisma.coupon.findMany({
+    where: {
+      active: true,
+      artistId: null,
+      AND: [{ OR: [{ startsAt: null }, { startsAt: { lte: now } }] }, { OR: [{ endsAt: null }, { endsAt: { gte: now } }] }],
+    },
+    orderBy: { createdAt: "asc" },
+  });
   res.json(coupons.filter((c) => c.usageLimit === null || c.used < c.usageLimit).map(({ code, label, kind, value, min }) => ({ code, label, kind, value, min })));
 });
 
@@ -160,6 +169,10 @@ publicRouter.get("/artists/:slug", async (req, res) => {
 
 publicRouter.get("/menu", async (_req, res) => {
   res.json(await loadMenu());
+});
+
+publicRouter.get("/announcement", async (_req, res) => {
+  res.json(await loadAnnouncement());
 });
 
 publicRouter.get("/collections", async (_req, res) => {

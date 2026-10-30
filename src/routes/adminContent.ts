@@ -7,6 +7,8 @@ import { resolveOne } from "../lib/media";
 import { canonicalMediaUrl } from "../lib/storage";
 import { audit } from "../services/audit";
 import { loadMenu, menuSchema, saveMenu } from "../services/menu";
+import { analyticsOverview } from "../services/analytics";
+import { announcementSchema, loadAnnouncement, saveAnnouncement } from "../services/announcement";
 import { commissions } from "../services/commissions";
 import { issueGiftCard } from "../services/giftcards";
 import { grossMerchandiseValue } from "./admin";
@@ -173,36 +175,109 @@ adminContentRouter.post("/promotions/:id/decision", needAdmin("promotions"), asy
   res.json(updated);
 });
 
-const couponBody = z.object({
-  code: z.string().transform((v) => v.trim().toUpperCase()).pipe(z.string().regex(/^[A-Z0-9]{3,20}$/, "Use 3–20 letters or digits")),
-  label: z.string().min(2).max(120),
+const dateField = z.preprocess((value) => (value === "" ? null : value), z.coerce.date().nullable());
+const couponShape = {
+  label: z.string().trim().min(2).max(120),
   kind: z.enum(["percent", "flat", "shipping"]),
   value: z.coerce.number().int().min(0).max(100000),
-  min: z.coerce.number().int().min(0).default(0),
-  usageLimit: z.coerce.number().int().min(1).nullable().optional(),
-  active: z.boolean().default(true),
+  min: z.coerce.number().int().min(0),
+  usageLimit: z.coerce.number().int().min(1).nullable(),
+  active: z.boolean(),
+  oncePerCustomer: z.boolean(),
+  startsAt: dateField,
+  endsAt: dateField,
+  collectionSlugs: z.array(z.string().trim().min(1).max(80)).max(50),
+};
+const couponCode = z.string().transform((v) => v.trim().toUpperCase()).pipe(z.string().regex(/^[A-Z0-9]{3,20}$/, "Use 3–20 letters or digits"));
+// Optional fields are left undefined (not defaulted) so editing one setting never resets the others.
+const couponCreate = z.object({ code: couponCode, ...couponShape }).partial({
+  min: true, usageLimit: true, active: true, oncePerCustomer: true, startsAt: true, endsAt: true, collectionSlugs: true,
+});
+const couponPatch = z.object(couponShape).partial();
+
+type CouponFields = {
+  kind: string; value: number; startsAt: Date | null; endsAt: Date | null; collectionSlugs: string[];
+};
+
+async function assertCouponRules(coupon: CouponFields) {
+  if (coupon.kind === "percent" && (coupon.value < 1 || coupon.value > 100)) throw badRequest("A percentage must be between 1 and 100");
+  if (coupon.kind === "flat" && coupon.value < 1) throw badRequest("Enter an amount off");
+  if (coupon.startsAt && coupon.endsAt && coupon.endsAt <= coupon.startsAt) throw badRequest("The end date must be after the start date");
+  const slugs = [...new Set(coupon.collectionSlugs)];
+  if (slugs.length && (await prisma.collection.count({ where: { slug: { in: slugs } } })) !== slugs.length) throw badRequest("One of the chosen collections no longer exists");
+}
+
+const couponStatus = (coupon: { active: boolean; used: number; usageLimit: number | null; startsAt: Date | null; endsAt: Date | null }, now = new Date()) => {
+  if (!coupon.active) return "disabled";
+  if (coupon.endsAt && coupon.endsAt < now) return "expired";
+  if (coupon.startsAt && coupon.startsAt > now) return "scheduled";
+  if (coupon.usageLimit !== null && coupon.used >= coupon.usageLimit) return "exhausted";
+  return "active";
+};
+
+const withStatus = <T extends { active: boolean; used: number; usageLimit: number | null; startsAt: Date | null; endsAt: Date | null; artistId: string | null }>(coupon: T) =>
+  ({ ...coupon, status: couponStatus(coupon), source: coupon.artistId ? "creator" : "store" });
+
+adminContentRouter.get("/discounts", needAdmin("promotions"), async (_req, res) => {
+  res.json((await prisma.coupon.findMany({ orderBy: { createdAt: "desc" } })).map(withStatus));
 });
 
 adminContentRouter.post("/coupons", needAdmin("promotions"), async (req, res) => {
-  const body = parse(couponBody, req.body);
-  if (body.kind === "percent" && body.value > 100) throw badRequest("A percentage cannot exceed 100");
-  if (await prisma.coupon.findFirst({ where: { code: { equals: body.code, mode: "insensitive" } } })) throw conflict("That code already exists");
-  const coupon = await prisma.coupon.create({ data: { ...body, usageLimit: body.usageLimit ?? null } });
-  await audit(prisma, actorLabel(req), `Created coupon ${coupon.code}`);
-  res.status(201).json(coupon);
+  const body = parse(couponCreate, req.body);
+  const data = {
+    code: body.code, label: body.label, kind: body.kind, value: body.kind === "shipping" ? 0 : body.value,
+    min: body.min ?? 0, usageLimit: body.usageLimit ?? null, active: body.active ?? true,
+    oncePerCustomer: body.oncePerCustomer ?? false, startsAt: body.startsAt ?? null, endsAt: body.endsAt ?? null,
+    collectionSlugs: [...new Set(body.collectionSlugs ?? [])],
+  };
+  await assertCouponRules(data);
+  if (await prisma.coupon.findFirst({ where: { code: { equals: data.code, mode: "insensitive" } } })) throw conflict("That code already exists");
+  const coupon = await prisma.coupon.create({ data });
+  await audit(prisma, actorLabel(req), `Created discount code ${coupon.code}`);
+  res.status(201).json(withStatus(coupon));
 });
 
 adminContentRouter.patch("/coupons/:code", needAdmin("promotions"), async (req, res) => {
-  const { code: _code, ...patch } = parse(couponBody.partial(), req.body);
-  const coupon = await prisma.coupon.update({ where: { code: param(req, "code") }, data: patch });
-  await audit(prisma, actorLabel(req), `Updated coupon ${coupon.code}`);
-  res.json(coupon);
+  const patch = parse(couponPatch, req.body);
+  const existing = await prisma.coupon.findUnique({ where: { code: param(req, "code") } });
+  if (!existing) throw notFound("Discount code not found");
+  const merged = { ...existing, ...patch };
+  if (merged.kind === "shipping") merged.value = 0;
+  if (patch.collectionSlugs) merged.collectionSlugs = [...new Set(patch.collectionSlugs)];
+  await assertCouponRules(merged);
+  const { code: _code, createdAt: _createdAt, artistId: _artistId, used: _used, ...data } = merged;
+  const coupon = await prisma.coupon.update({ where: { code: existing.code }, data });
+  await audit(prisma, actorLabel(req), `Updated discount code ${coupon.code}`);
+  res.json(withStatus(coupon));
 });
 
+// A code that has been redeemed is only switched off so past orders keep their reference.
 adminContentRouter.delete("/coupons/:code", needAdmin("promotions"), async (req, res) => {
-  const coupon = await prisma.coupon.update({ where: { code: param(req, "code") }, data: { active: false } });
-  await audit(prisma, actorLabel(req), `Deactivated coupon ${coupon.code}`);
-  res.status(204).end();
+  const existing = await prisma.coupon.findUnique({ where: { code: param(req, "code") } });
+  if (!existing) throw notFound("Discount code not found");
+  if (existing.used > 0) {
+    await prisma.coupon.update({ where: { code: existing.code }, data: { active: false } });
+    await audit(prisma, actorLabel(req), `Deactivated discount code ${existing.code}`);
+    return void res.json({ deleted: false });
+  }
+  await prisma.coupon.delete({ where: { code: existing.code } });
+  await audit(prisma, actorLabel(req), `Deleted discount code ${existing.code}`);
+  res.json({ deleted: true });
+});
+
+adminContentRouter.get("/cms/announcement", needAdmin("cms"), async (_req, res) => {
+  res.json(await loadAnnouncement());
+});
+
+adminContentRouter.put("/cms/announcement", needAdmin("cms"), async (req, res) => {
+  const saved = await saveAnnouncement(parse(announcementSchema, req.body));
+  await audit(prisma, actorLabel(req), "Updated announcement bar");
+  res.json(saved);
+});
+
+adminContentRouter.get("/analytics/overview", needAdmin("analytics"), async (req, res) => {
+  const { from, to } = parse(z.object({ from: z.coerce.date(), to: z.coerce.date() }), req.query);
+  res.json(await analyticsOverview(from, to));
 });
 
 // ───────── review moderation ─────────
