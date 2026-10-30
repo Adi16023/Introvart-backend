@@ -83,17 +83,31 @@ adminContentRouter.put("/cms/policies/:slug", needAdmin("cms"), async (req, res)
   res.json(policy);
 });
 
-const collectionBody = z.object({ title: z.string().min(2).max(80), lede: z.string().max(300).default(""), ids: z.array(z.string()).max(100).default([]), sort: z.coerce.number().int().default(0) });
+const collectionBody = z.object({
+  title: z.string().min(2).max(80),
+  lede: z.string().max(300).default(""),
+  ids: z.array(z.string()).max(100).default([]),
+  sort: z.coerce.number().int().default(0),
+  image: z.string().max(2000).default(""),
+  menuPlacement: z.enum(["collections", "new-arrivals", "featured", "artwork-gifts", "all-artwork", "hidden"]).default("collections"),
+});
 
 adminContentRouter.post("/cms/collections", needAdmin("cms"), async (req, res) => {
   const body = parse(collectionBody, req.body);
   const slug = slugify(body.title);
   if (await prisma.collection.findUnique({ where: { slug } })) throw conflict("A collection with that title exists");
-  res.status(201).json(await prisma.collection.create({ data: { slug, ...body } }));
+  const image = body.image ? await resolveOne(req, body.image, ["cms"]) : "";
+  const collection = await prisma.collection.create({ data: { slug, ...body, image } });
+  await audit(prisma, actorLabel(req), `Created collection "${collection.title}"`);
+  res.status(201).json(collection);
 });
 
 adminContentRouter.patch("/cms/collections/:slug", needAdmin("cms"), async (req, res) => {
-  res.json(await prisma.collection.update({ where: { slug: param(req, "slug") }, data: parse(collectionBody.partial(), req.body) }));
+  const body = parse(collectionBody.partial(), req.body);
+  if (body.image) body.image = await resolveOne(req, body.image, ["cms"]);
+  const collection = await prisma.collection.update({ where: { slug: param(req, "slug") }, data: body });
+  await audit(prisma, actorLabel(req), `Updated collection "${collection.title}"`);
+  res.json(collection);
 });
 
 adminContentRouter.delete("/cms/collections/:slug", needAdmin("cms"), async (req, res) => {

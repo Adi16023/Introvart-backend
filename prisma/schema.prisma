@@ -196,11 +196,14 @@ model Review {
 }
 
 model Collection {
-  slug  String   @id
-  title String
-  lede  String   @default("")
-  ids   String[]
-  sort  Int      @default(0)
+  slug         String   @id
+  title        String
+  lede         String   @default("")
+  ids          String[]
+  sort         Int      @default(0)
+  image        String   @default("")
+  menuPlacement String  @default("collections")
+  createdAt    DateTime @default(now())
 }
 
 model Occasion {
