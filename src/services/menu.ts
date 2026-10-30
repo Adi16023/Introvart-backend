@@ -77,9 +77,9 @@ export type MenuConfig = z.infer<typeof menuSchema>;
 
 export const DEFAULT_MENU: MenuConfig = {
   tabs: [
-    { id: "shop", label: "Shop", visible: true },
-    { id: "collections", label: "Collections", visible: true },
-    { id: "help", label: "Help", visible: true },
+    { id: "shop", label: "Shop", visible: true, href: "/shop" },
+    { id: "collections", label: "Collections", visible: true, href: "/shop" },
+    { id: "help", label: "Help", visible: true, href: "/about" },
   ],
   shop: {
     categories: [

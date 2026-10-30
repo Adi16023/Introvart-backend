@@ -12,7 +12,7 @@ export const searchSettingsSchema = z.object({
 export type SearchSettings = z.infer<typeof searchSettingsSchema>;
 
 export const DEFAULT_SEARCH_SETTINGS: SearchSettings = {
-  placeholders: ["Search art, artists, rooms, occasions"],
+  placeholders: ["art", "artists", "rooms", "occasions"],
   rotate: true,
   intervalSeconds: 4,
 };
