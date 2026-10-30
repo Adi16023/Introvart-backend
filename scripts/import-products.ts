@@ -21,7 +21,7 @@ async function main() {
     if (values.confirm !== "REPLACE_CATALOGUE" || !values.backup) {
       throw new Error("Replacement requires --confirm=REPLACE_CATALOGUE and --backup=<new-file.json>");
     }
-    const products = await prisma.artwork.findMany({ include: { ...productInclude, reviews: { include: { votes: true } } } });
+    const products = await prisma.product.findMany({ include: { ...productInclude, reviews: { include: { votes: true } } } });
     const ids = products.map((product) => product.id);
     const [cart, wishlist, recent, collections] = await Promise.all([
       prisma.cartItem.findMany({ where: { artworkId: { in: ids } } }),

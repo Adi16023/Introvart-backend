@@ -112,7 +112,7 @@ async function productArtist(tx: Tx, input: ProductInput, vendors = new Map<stri
   return artistId;
 }
 
-function productData(input: ProductInput, artistId: string): Prisma.ArtworkCreateManyInput {
+function productData(input: ProductInput, artistId: string): Prisma.ProductCreateManyInput {
   const orientation = input.metafields["Orientation (product.metafields.shopify.orientation)"]?.toLowerCase();
   return {
     id: uid("PROD"), slug: input.handle, title: input.title, artistId,
@@ -132,7 +132,7 @@ function productData(input: ProductInput, artistId: string): Prisma.ArtworkCreat
 
 async function insertProduct(tx: Tx, input: ProductInput) {
   const artistId = await productArtist(tx, input);
-  return tx.artwork.create({
+  return tx.product.create({
     data: {
       ...productData(input, artistId),
       variants: { create: input.variants.map((variant, sort) => ({ ...variant, unitPriceMeasure: json(variant.unitPriceMeasure), sort })) },
@@ -144,7 +144,7 @@ async function insertProduct(tx: Tx, input: ProductInput) {
 
 export async function createProduct(input: ProductInput, actor: string) {
   return transaction(async (tx) => {
-    if (await tx.artwork.findUnique({ where: { slug: input.handle }, select: { id: true } })) throw conflict(`Product handle "${input.handle}" already exists`);
+    if (await tx.product.findUnique({ where: { slug: input.handle }, select: { id: true } })) throw conflict(`Product handle "${input.handle}" already exists`);
     const result = await insertProduct(tx, input);
     await audit(tx, actor, `Created product "${input.title}"`);
     return result;
@@ -156,7 +156,7 @@ export async function importProducts(products: ProductInput[], actor: string, re
   return prisma.$transaction(async (tx) => {
     const handles = products.map((product) => product.handle);
     if (new Set(handles).size !== handles.length) throw badRequest("Duplicate handles in import");
-    const existing = await tx.artwork.findMany({ where: replace ? {} : { slug: { in: handles } }, select: { id: true, slug: true } });
+    const existing = await tx.product.findMany({ where: replace ? {} : { slug: { in: handles } }, select: { id: true, slug: true } });
     if (!replace && existing.length) throw conflict(`Existing handles: ${existing.slice(0, 10).map((product) => product.slug).join(", ")}. No products were imported.`);
     let removed = 0;
     if (replace) {
@@ -169,9 +169,9 @@ export async function importProducts(products: ProductInput[], actor: string, re
       for (const collection of collections) {
         await tx.collection.update({ where: { slug: collection.slug }, data: { ids: collection.ids.filter((id) => !removedIds.has(id)) } });
       }
-      removed = (await tx.artwork.deleteMany({ where: { id: { in: ids } } })).count;
+      removed = (await tx.product.deleteMany({ where: { id: { in: ids } } })).count;
     }
-    const productRows: Prisma.ArtworkCreateManyInput[] = [];
+    const productRows: Prisma.ProductCreateManyInput[] = [];
     const variantRows: Prisma.ProductVariantCreateManyInput[] = [];
     const imageRows: Prisma.ProductImageCreateManyInput[] = [];
     const vendors = new Map<string, string>();
@@ -184,7 +184,7 @@ export async function importProducts(products: ProductInput[], actor: string, re
       })));
       imageRows.push(...product.images.map((image) => ({ ...image, productId: row.id })));
     }
-    await tx.artwork.createMany({ data: productRows });
+    await tx.product.createMany({ data: productRows });
     await tx.productVariant.createMany({ data: variantRows });
     if (imageRows.length) await tx.productImage.createMany({ data: imageRows });
     const variants = variantRows.length;

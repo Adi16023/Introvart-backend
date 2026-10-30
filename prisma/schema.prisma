@@ -70,7 +70,7 @@ model Artist {
   boostedUntil      DateTime?
   createdAt         DateTime  @default(now())
 
-  artworks    Artwork[]
+  artworks    Product[]
   commissions Commission[]
   payouts     Payout[]
   coupons     Coupon[]
@@ -112,7 +112,8 @@ model Address {
 
 // ───────── Catalogue ─────────
 
-model Artwork {
+// One catalogue table for products and artwork; "Artwork" remains an API/view compatibility name.
+model Product {
   id              String   @id
   slug            String   @unique
   title           String
@@ -165,7 +166,7 @@ model Artwork {
 model ProductVariant {
   id                 String  @id @default(cuid())
   productId          String
-  product            Artwork @relation(fields: [productId], references: [id], onDelete: Cascade)
+  product            Product @relation(fields: [productId], references: [id], onDelete: Cascade)
   optionValues       String[]
   sku                String  @default("")
   barcode            String  @default("")
@@ -195,7 +196,7 @@ model ProductVariant {
 model ProductImage {
   id        String  @id @default(cuid())
   productId String
-  product   Artwork @relation(fields: [productId], references: [id], onDelete: Cascade)
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
   src       String
   position  Int     @default(1)
   alt       String  @default("")
@@ -206,7 +207,7 @@ model ProductImage {
 model Review {
   id        String   @id
   artworkId String
-  artwork   Artwork  @relation(fields: [artworkId], references: [id], onDelete: Cascade)
+  artwork   Product  @relation(fields: [artworkId], references: [id], onDelete: Cascade)
   ownerId   String?
   author    String
   rating    Int

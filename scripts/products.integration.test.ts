@@ -9,7 +9,7 @@ import { prisma } from "../src/lib/db";
 import { issueStaffToken } from "../src/services/staff-auth";
 import { readProductCsv } from "../src/services/product-csv";
 import { productInclude } from "../src/services/products";
-import type { Artwork, ProductVariant } from "@prisma/client";
+import type { Product, ProductVariant } from "@prisma/client";
 
 after(() => prisma.$disconnect());
 
@@ -19,7 +19,7 @@ test("product API, CSV import and variant checkout against configured database",
   const bulkHandle = `integration-bulk-${suffix}`;
   const ownerId = `guest:product-test-${suffix}`;
   const guest = { "x-guest-id": `product-test-${suffix}` };
-  const existing = await prisma.artwork.findFirstOrThrow({ where: { status: "approved" }, include: { artist: true } });
+  const existing = await prisma.product.findFirstOrThrow({ where: { status: "approved" }, include: { artist: true } });
   const user = await prisma.staffUser.findFirstOrThrow({ where: { role: "super", disabled: false } });
   const token = (await issueStaffToken(user)).accessToken;
   const headers = { Authorization: `Bearer ${token}` };
@@ -36,12 +36,12 @@ test("product API, CSV import and variant checkout against configured database",
     try {
       await prisma.cartItem.deleteMany({ where: { ownerId } });
       await prisma.order.deleteMany({ where: { ownerId } });
-      await prisma.artwork.deleteMany({ where: { slug: { in: [handle, bulkHandle] } } });
+      await prisma.product.deleteMany({ where: { slug: { in: [handle, bulkHandle] } } });
     } finally {
       await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     }
   });
-  let created: Artwork & { variants: ProductVariant[] };
+  let created: Product & { variants: ProductVariant[] };
   await t.test("add-product API validates requests and persists variants and images", async () => {
     const invalid = await send("/admin/products", { title: "Invalid" });
     assert.equal(invalid.status, 400);
@@ -115,24 +115,24 @@ test("product API, CSV import and variant checkout against configured database",
     const preview = await upload(true);
     assert.equal(preview.status, 200, await preview.clone().text());
     assert.equal((await preview.json()).errors.length, 0);
-    assert.equal(await prisma.artwork.count({ where: { slug: bulkHandle } }), 0);
+    assert.equal(await prisma.product.count({ where: { slug: bulkHandle } }), 0);
     const invalid = await upload(false, csv.replace(",199,", ",-1,"));
     assert.equal(invalid.status, 400);
-    assert.equal(await prisma.artwork.count({ where: { slug: bulkHandle } }), 0);
+    assert.equal(await prisma.product.count({ where: { slug: bulkHandle } }), 0);
     const imported = await upload(false);
     assert.equal(imported.status, 201, await imported.clone().text());
     assert.equal((await imported.json()).created, 1);
-    const bulk = await prisma.artwork.findUniqueOrThrow({ where: { slug: bulkHandle }, include: productInclude });
+    const bulk = await prisma.product.findUniqueOrThrow({ where: { slug: bulkHandle }, include: productInclude });
     assert.equal(bulk.variants[0].price, 199);
     assert.equal(bulk.status, "draft");
     assert.equal((await upload(false)).status, 400);
-    assert.equal(await prisma.artwork.count({ where: { slug: bulkHandle } }), 1);
+    assert.equal(await prisma.product.count({ where: { slug: bulkHandle } }), 1);
   });
 });
 
 test("stored replacement matches every supplied CSV product, variant and original column", { skip: !process.env.PRODUCT_CSV_TEST_FILE || process.env.RUN_PRODUCT_DB_TESTS !== "1" }, async () => {
   const parsed = readProductCsv(await readFile(process.env.PRODUCT_CSV_TEST_FILE!, "utf8"));
-  const stored = await prisma.artwork.findMany({ where: { slug: { in: parsed.products.map((product) => product.handle) } }, include: productInclude });
+  const stored = await prisma.product.findMany({ where: { slug: { in: parsed.products.map((product) => product.handle) } }, include: productInclude });
   assert.equal(stored.length, 50);
   assert.equal(stored.reduce((sum, product) => sum + product.variants.length, 0), 196);
   for (const input of parsed.products) {

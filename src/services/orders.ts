@@ -83,7 +83,7 @@ export async function placeOrder(input: PlaceOrderInput) {
         if (!reserved.count) throw conflict(`${line.title} just sold out`);
       }
       if (line.artwork && line.artwork.stock !== null) {
-        const reserved = await tx.artwork.updateMany({
+        const reserved = await tx.product.updateMany({
           where: { id: line.artwork.id, stock: { gte: line.quantity } },
           data: { stock: { decrement: line.quantity } },
         });
@@ -195,7 +195,7 @@ async function releaseStock(tx: Tx, order: Order & { items: OrderItem[] }) {
       data: { inventoryQuantity: { increment: item.quantity } },
     });
     if (!item.artworkId) continue;
-    await tx.artwork.updateMany({ where: { id: item.artworkId, stock: { not: null } }, data: { stock: { increment: item.quantity } } });
+    await tx.product.updateMany({ where: { id: item.artworkId, stock: { not: null } }, data: { stock: { increment: item.quantity } } });
   }
   await tx.order.update({ where: { id: order.id }, data: { stockReserved: false } });
 }
@@ -215,9 +215,9 @@ async function reserveStock(tx: Tx, order: Order & { items: OrderItem[] }) {
       }
     }
     if (!item.artworkId) continue;
-    const artwork = await tx.artwork.findUnique({ where: { id: item.artworkId }, select: { stock: true, title: true } });
+    const artwork = await tx.product.findUnique({ where: { id: item.artworkId }, select: { stock: true, title: true } });
     if (artwork && artwork.stock !== null) {
-      const taken = await tx.artwork.updateMany({
+      const taken = await tx.product.updateMany({
         where: { id: item.artworkId, stock: { gte: item.quantity } },
         data: { stock: { decrement: item.quantity } },
       });

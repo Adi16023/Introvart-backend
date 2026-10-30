@@ -1,4 +1,4 @@
-import type { Artist, Artwork } from "@prisma/client";
+import type { Artist, Product } from "@prisma/client";
 import { prisma } from "../lib/db";
 import { fromPrice, loadConfig, type PricingConfig } from "./pricing";
 import { productInclude } from "./products";
@@ -20,7 +20,7 @@ function edit(a: string, b: string) {
   return row[b.length];
 }
 
-export function matches(query: string, artwork: Artwork, artistName: string) {
+export function matches(query: string, artwork: Product, artistName: string) {
   const q = query.toLowerCase().trim();
   if (!q) return true;
   const hay = [artwork.title, artwork.story, artwork.category, artwork.style, artistName, ...artwork.tags, ...artwork.colours, ...artwork.rooms, ...artwork.occasions]
@@ -32,7 +32,7 @@ export function matches(query: string, artwork: Artwork, artistName: string) {
 }
 
 type ArtistCard = Pick<Artist, "id" | "slug" | "name" | "city" | "verified" | "boostedUntil">;
-export type ArtworkWithArtist = Artwork & { artist: ArtistCard; variants?: ProductVariant[]; images?: ProductImage[] };
+export type ArtworkWithArtist = Product & { artist: ArtistCard; variants?: ProductVariant[]; images?: ProductImage[] };
 
 export function present(config: PricingConfig, artwork: ArtworkWithArtist) {
   const { boostedUntil: _boost, ...artist } = artwork.artist;
@@ -65,7 +65,7 @@ export async function listArtworks(query: CatalogQuery) {
     ids = collection?.ids ?? [];
   }
 
-  const rows = await prisma.artwork.findMany({
+  const rows = await prisma.product.findMany({
     where: {
       status: "approved",
       artist: { suspended: false, ...(query.artist ? { slug: query.artist } : {}) },
@@ -110,7 +110,7 @@ export async function listArtworks(query: CatalogQuery) {
 export async function artworksByIds(ids: string[]) {
   if (!ids.length) return [];
   const config = await loadConfig();
-  const rows = await prisma.artwork.findMany({
+  const rows = await prisma.product.findMany({
     where: { id: { in: ids } },
     include: { artist: artistSelect, ...productInclude },
   });

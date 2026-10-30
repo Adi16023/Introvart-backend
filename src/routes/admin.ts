@@ -39,7 +39,7 @@ adminRouter.get("/dashboard", needAdmin(""), async (_req, res) => {
     prisma.order.count(),
     prisma.returnCase.count({ where: { status: { notIn: ["refunded", "closed", "rejected"] } } }),
     prisma.printJob.count({ where: { status: { notIn: ["dispatched", "cancelled", "reprint"] } } }),
-    prisma.artwork.count({ where: { status: "submitted" } }),
+    prisma.product.count({ where: { status: "submitted" } }),
     prisma.ticket.count({ where: { status: { not: "resolved" } } }),
     prisma.artist.count({ where: { kyc: "pending" } }),
     prisma.payout.count({ where: { status: "requested" } }),
@@ -131,7 +131,7 @@ adminRouter.patch("/creators/:id/rates", needAdmin("creators"), async (req, res)
 adminRouter.get("/moderation", needAdmin("moderation"), async (req, res) => {
   const { status } = parse(z.object({ status: z.string().optional() }), req.query);
   res.json(
-    await prisma.artwork.findMany({
+    await prisma.product.findMany({
       where: status ? { status } : { status: { not: "approved" } },
       include: { artist: { select: { id: true, name: true, kyc: true } } },
       orderBy: { updatedAt: "desc" },
@@ -143,19 +143,19 @@ adminRouter.post("/artworks/:id/decision", needAdmin("moderation"), async (req, 
   const body = parse(z.object({ decision: z.enum(["approve", "changes", "reject", "suspend"]), note: z.string().max(500).optional() }), req.body);
   if (body.decision !== "approve" && !body.note?.trim()) throw badRequest("A note is needed so the creator knows why");
   const status = { approve: "approved", changes: "changes_required", reject: "rejected", suspend: "suspended" }[body.decision];
-  const artwork = await prisma.artwork.update({ where: { id: param(req, "id") }, data: { status, moderatorNote: body.decision === "approve" ? null : body.note } });
+  const artwork = await prisma.product.update({ where: { id: param(req, "id") }, data: { status, moderatorNote: body.decision === "approve" ? null : body.note } });
   await audit(prisma, actorLabel(req), `${status.replaceAll("_", " ")}: ${artwork.title}`);
   res.json(artwork);
 });
 
 adminRouter.get("/copyright", needAdmin("copyright"), async (_req, res) => {
-  const works = await prisma.artwork.findMany({ include: { artist: { select: { name: true } } } });
+  const works = await prisma.product.findMany({ include: { artist: { select: { name: true } } } });
   res.json(works.filter((w) => !w.tags.includes("rights-declared") || w.status === "changes_required").map((w) => ({ ...w, note: w.moderatorNote ?? "Rights note missing" })));
 });
 
 adminRouter.post("/copyright/:id/takedown", needAdmin("copyright"), async (req, res) => {
   const { note } = parse(z.object({ note: z.string().min(3).max(500) }), req.body);
-  const artwork = await prisma.artwork.update({ where: { id: param(req, "id") }, data: { status: "suspended", moderatorNote: note } });
+  const artwork = await prisma.product.update({ where: { id: param(req, "id") }, data: { status: "suspended", moderatorNote: note } });
   await audit(prisma, actorLabel(req), `Copyright takedown on ${artwork.title}: ${note}`);
   res.json(artwork);
 });

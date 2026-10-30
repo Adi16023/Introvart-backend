@@ -200,7 +200,7 @@ adminContentRouter.post("/reviews/:id/moderate", needAdmin("reviews"), async (re
     }
     await prisma.$transaction([
       prisma.review.update({ where: { id: review.id }, data: { status } }),
-      prisma.artwork.update({ where: { id: review.artworkId }, data: { reviewCount: nextCount, rating: Math.round(nextRating * 10) / 10 } }),
+      prisma.product.update({ where: { id: review.artworkId }, data: { reviewCount: nextCount, rating: Math.round(nextRating * 10) / 10 } }),
     ]);
   }
   await audit(prisma, actorLabel(req), `Review ${review.id} marked ${status}`);

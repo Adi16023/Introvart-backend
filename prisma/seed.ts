@@ -35,7 +35,7 @@ async function wipe() {
     prisma.coupon.deleteMany(),
     prisma.address.deleteMany(),
     prisma.customer.deleteMany(),
-    prisma.artwork.deleteMany(),
+    prisma.product.deleteMany(),
     prisma.artist.deleteMany(),
     prisma.collection.deleteMany(),
     prisma.occasion.deleteMany(),
@@ -81,7 +81,7 @@ async function main() {
 
   await prisma.artist.createMany({ data: seed.artists.map((a) => ({ ...a, gst: a.gst ?? null })) });
 
-  await prisma.artwork.createMany({
+  await prisma.product.createMany({
     data: seed.artworks.map((a, index) => ({
       ...a,
       moderatorNote: a.moderatorNote ?? null,

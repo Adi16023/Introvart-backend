@@ -181,7 +181,7 @@ shopRouter.post("/cart/items", async (req, res) => {
   let data: { artworkId: string | null; title: string; artistName: string; image: string; fulfilment: string };
   let chosenVariant: ProductVariant | null = null;
   if (body.artworkId) {
-    const artwork = await prisma.artwork.findFirst({ where: { id: body.artworkId, status: "approved", artist: { suspended: false } }, include: { artist: true, variants: true } });
+    const artwork = await prisma.product.findFirst({ where: { id: body.artworkId, status: "approved", artist: { suspended: false } }, include: { artist: true, variants: true } });
     if (!artwork) throw notFound("Artwork not available");
     if (artwork.giftCard) throw badRequest("Purchase gift cards through the gift-card page");
     const variant = selectedVariant(artwork.variants, body.variantId);
@@ -403,7 +403,7 @@ shopRouter.post("/reviews", async (req, res) => {
     }),
     req.body,
   );
-  const artwork = await prisma.artwork.findUnique({ where: { id: body.artworkId } });
+  const artwork = await prisma.product.findUnique({ where: { id: body.artworkId } });
   if (!artwork) throw notFound("Artwork not found");
   const customer = req.customerId ? await prisma.customer.findUnique({ where: { id: req.customerId } }) : null;
   const author = customer?.name ?? body.author;
@@ -459,7 +459,7 @@ shopRouter.get("/me/wishlist", async (req, res) => {
 
 shopRouter.put("/me/wishlist/:artworkId", async (req, res) => {
   const artworkId = param(req, "artworkId");
-  if (!(await prisma.artwork.findUnique({ where: { id: artworkId }, select: { id: true } }))) throw notFound("Artwork not found");
+  if (!(await prisma.product.findUnique({ where: { id: artworkId }, select: { id: true } }))) throw notFound("Artwork not found");
   await prisma.wishlistItem.upsert({ where: { ownerId_artworkId: { ownerId: req.ownerId!, artworkId } }, create: { ownerId: req.ownerId!, artworkId }, update: {} });
   res.status(204).end();
 });
@@ -494,7 +494,7 @@ shopRouter.get("/me/recent", async (req, res) => {
 
 shopRouter.post("/me/recent/:artworkId", async (req, res) => {
   const artworkId = param(req, "artworkId");
-  if (!(await prisma.artwork.findUnique({ where: { id: artworkId }, select: { id: true } }))) throw notFound("Artwork not found");
+  if (!(await prisma.product.findUnique({ where: { id: artworkId }, select: { id: true } }))) throw notFound("Artwork not found");
   await prisma.recentView.upsert({ where: { ownerId_artworkId: { ownerId: req.ownerId!, artworkId } }, create: { ownerId: req.ownerId!, artworkId }, update: { at: new Date() } });
   res.status(204).end();
 });

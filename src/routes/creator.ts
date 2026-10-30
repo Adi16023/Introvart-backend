@@ -135,13 +135,13 @@ async function createArtwork(artistId: string, body: z.infer<typeof artworkBody>
   const artist = await prisma.artist.findUniqueOrThrow({ where: { id: artistId } });
   const base = slugify(body.title) || uid("work").toLowerCase();
   let slug = base;
-  for (let n = 2; await prisma.artwork.findUnique({ where: { slug } }); n += 1) slug = `${base}-${n}`;
+  for (let n = 2; await prisma.product.findUnique({ where: { slug } }); n += 1) slug = `${base}-${n}`;
   const sellerShipped = body.fulfilment === "original" || body.fulfilment === "seller_fulfilled";
   if (body.fulfilment === "personalized" && !body.personalization?.length) throw badRequest("A personalised template needs at least one field");
   const tags = new Set(body.tags);
   if (body.rightsDeclared) tags.add("rights-declared");
   const canSubmit = body.submit && body.rightsDeclared;
-  return prisma.artwork.create({
+  return prisma.product.create({
     data: {
       id: uid("AW"),
       slug,
@@ -168,7 +168,7 @@ async function createArtwork(artistId: string, body: z.infer<typeof artworkBody>
 }
 
 creatorRouter.get("/artworks", async (req, res) => {
-  res.json(await prisma.artwork.findMany({ where: { artistId: req.creatorId }, orderBy: { createdAt: "desc" } }));
+  res.json(await prisma.product.findMany({ where: { artistId: req.creatorId }, orderBy: { createdAt: "desc" } }));
 });
 
 creatorRouter.post("/artworks", async (req, res) => {
@@ -179,7 +179,7 @@ creatorRouter.post("/artworks", async (req, res) => {
 });
 
 async function ownArtwork(req: { creatorId?: string }, id: string) {
-  const artwork = await prisma.artwork.findFirst({ where: { id, artistId: req.creatorId } });
+  const artwork = await prisma.product.findFirst({ where: { id, artistId: req.creatorId } });
   if (!artwork) throw notFound("Artwork not found");
   return artwork;
 }
@@ -194,7 +194,7 @@ creatorRouter.patch("/artworks/:id", async (req, res) => {
   if (rest.image) rest.image = await resolveOne(req, rest.image, ["artwork"]);
   if (rest.roomImage) rest.roomImage = await resolveOne(req, rest.roomImage, ["artwork"], "roomImage");
   const touchesContent = CONTENT_FIELDS.some((field) => (body as Record<string, unknown>)[field] !== undefined);
-  const updated = await prisma.artwork.update({
+  const updated = await prisma.product.update({
     where: { id: artwork.id },
     data: {
       ...rest,
@@ -212,33 +212,33 @@ creatorRouter.post("/artworks/:id/rights", async (req, res) => {
     res.json(artwork);
     return;
   }
-  res.json(await prisma.artwork.update({ where: { id: artwork.id }, data: { tags: [...artwork.tags, "rights-declared"] } }));
+  res.json(await prisma.product.update({ where: { id: artwork.id }, data: { tags: [...artwork.tags, "rights-declared"] } }));
 });
 
 creatorRouter.post("/artworks/:id/submit", async (req, res) => {
   const artwork = await ownArtwork(req, param(req, "id"));
   if (!["draft", "changes_required"].includes(artwork.status)) throw conflict(`A ${artwork.status.replaceAll("_", " ")} work cannot be submitted`);
   if (!artwork.tags.includes("rights-declared")) throw badRequest("Declare that you hold the rights first");
-  res.json(await prisma.artwork.update({ where: { id: artwork.id }, data: { status: "submitted", moderatorNote: null } }));
+  res.json(await prisma.product.update({ where: { id: artwork.id }, data: { status: "submitted", moderatorNote: null } }));
 });
 
 creatorRouter.patch("/artworks/:id/stock", async (req, res) => {
   const { stock } = parse(z.object({ stock: z.coerce.number().int().min(0).max(100000) }), req.body);
   const artwork = await ownArtwork(req, param(req, "id"));
   if (artwork.stock === null) throw badRequest("Prints are made to order and carry no count");
-  res.json(await prisma.artwork.update({ where: { id: artwork.id }, data: { stock } }));
+  res.json(await prisma.product.update({ where: { id: artwork.id }, data: { stock } }));
 });
 
 creatorRouter.delete("/artworks/:id", async (req, res) => {
   const artwork = await ownArtwork(req, param(req, "id"));
   if (!["draft", "rejected"].includes(artwork.status)) throw conflict("Only drafts and rejected works can be deleted");
   if (await prisma.orderItem.count({ where: { artworkId: artwork.id } })) throw conflict("This work has orders against it");
-  await prisma.artwork.delete({ where: { id: artwork.id } });
+  await prisma.product.delete({ where: { id: artwork.id } });
   res.status(204).end();
 });
 
 creatorRouter.get("/templates", async (req, res) => {
-  res.json(await prisma.artwork.findMany({ where: { artistId: req.creatorId, fulfilment: "personalized" }, orderBy: { createdAt: "desc" } }));
+  res.json(await prisma.product.findMany({ where: { artistId: req.creatorId, fulfilment: "personalized" }, orderBy: { createdAt: "desc" } }));
 });
 
 creatorRouter.post("/templates", async (req, res) => {
@@ -305,14 +305,14 @@ creatorRouter.post("/orders/:orderId/items/:itemId/dispatch", async (req, res) =
 });
 
 creatorRouter.get("/inventory", async (req, res) => {
-  const works = await prisma.artwork.findMany({ where: { artistId: req.creatorId }, select: { id: true, title: true, fulfilment: true, stock: true, status: true }, orderBy: { title: "asc" } });
+  const works = await prisma.product.findMany({ where: { artistId: req.creatorId }, select: { id: true, title: true, fulfilment: true, stock: true, status: true }, orderBy: { title: "asc" } });
   res.json(works.map((work) => ({ ...work, madeToOrder: work.stock === null })));
 });
 
 // ───────── analytics, earnings, payouts ─────────
 
 creatorRouter.get("/analytics", async (req, res) => {
-  const works = await prisma.artwork.findMany({ where: { artistId: req.creatorId } });
+  const works = await prisma.product.findMany({ where: { artistId: req.creatorId } });
   const sold = await prisma.orderItem.groupBy({
     by: ["artworkId"],
     where: { creatorId: req.creatorId, status: { notIn: ["cancelled", "pending_payment"] } },

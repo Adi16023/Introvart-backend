@@ -18,8 +18,8 @@ productsRouter.get("/", async (req, res) => {
   }), req.query);
   const where = query.q ? { OR: [{ title: { contains: query.q, mode: "insensitive" as const } }, { slug: { contains: query.q, mode: "insensitive" as const } }] } : {};
   const [total, items] = await Promise.all([
-    prisma.artwork.count({ where }),
-    prisma.artwork.findMany({ where, include: productInclude, orderBy: { createdAt: "desc" }, skip: (query.page - 1) * query.limit, take: query.limit }),
+    prisma.product.count({ where }),
+    prisma.product.findMany({ where, include: productInclude, orderBy: { createdAt: "desc" }, skip: (query.page - 1) * query.limit, take: query.limit }),
   ]);
   res.json({ total, page: query.page, limit: query.limit, items });
 });
@@ -35,7 +35,7 @@ productsRouter.post("/import", csvUpload, async (req, res) => {
   if (!req.file) throw badRequest("Choose a CSV file");
   const parsed = readProductCsv(req.file.buffer.toString("utf8"));
   const summary = csvSummary(parsed);
-  const existing = await prisma.artwork.findMany({ where: { slug: { in: parsed.products.map((product) => product.handle) } }, select: { slug: true } });
+  const existing = await prisma.product.findMany({ where: { slug: { in: parsed.products.map((product) => product.handle) } }, select: { slug: true } });
   for (const product of existing) {
     summary.errors.push({ row: 0, handle: product.slug, field: "Handle", message: "This product already exists; imports only create new products" });
   }

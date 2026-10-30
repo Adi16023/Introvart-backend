@@ -1,4 +1,4 @@
-import type { CartItem, Artwork, ProductVariant } from "@prisma/client";
+import type { CartItem, Product, ProductVariant } from "@prisma/client";
 import type { Db } from "../lib/db";
 import { couponDiscount, pincodeInfo, unitPrice, type PricingConfig } from "./pricing";
 import { variantAvailable, variantLabel } from "./product-variants";
@@ -6,7 +6,7 @@ import { variantAvailable, variantLabel } from "./product-variants";
 export type PricedLine = CartItem & {
   unitPrice: number;
   lineTotal: number;
-  artwork: Pick<Artwork, "id" | "slug" | "stock" | "status" | "artistId" | "fulfilment" | "personalization"> | null;
+  artwork: Pick<Product, "id" | "slug" | "stock" | "status" | "artistId" | "fulfilment" | "personalization"> | null;
   problem: string | null;
   variant: ProductVariant | null;
   variantTitle: string | null;
@@ -16,7 +16,7 @@ export async function loadPricedCart(db: Db, ownerId: string, config: PricingCon
   const items = await db.cartItem.findMany({ where: { ownerId }, orderBy: { createdAt: "asc" } });
   const ids = items.map((item) => item.artworkId).filter((id): id is string => Boolean(id));
   const artworks = ids.length
-    ? await db.artwork.findMany({
+    ? await db.product.findMany({
         where: { id: { in: ids } },
         select: { id: true, slug: true, stock: true, status: true, artistId: true, fulfilment: true, basePrice: true, priceFactor: true, personalization: true, variants: true },
       })
