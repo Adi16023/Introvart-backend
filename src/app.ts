@@ -11,6 +11,7 @@ import { adminContentRouter } from "./routes/adminContent";
 import { creatorRouter } from "./routes/creator";
 import { fulfilRouter } from "./routes/fulfil";
 import { mediaRouter } from "./routes/media";
+import { paymentsWebhookRouter } from "./routes/payments";
 import { publicRouter } from "./routes/public";
 import { shopRouter } from "./routes/shop";
 import { staffAuthRouter } from "./routes/staffAuth";
@@ -28,7 +29,8 @@ export function buildApp() {
     }),
   );
   // Uploads go through POST /uploads (multipart); JSON bodies only carry references and text.
-  app.use(express.json({ limit: "1mb" }));
+  // The raw bytes are kept so payment webhooks can have their signature checked.
+  app.use(express.json({ limit: "1mb", verify: (req, _res, buffer) => { (req as unknown as { rawBody?: Buffer }).rawBody = buffer; } }));
   app.use(rateLimit({ windowMs: 60_000, limit: 600, standardHeaders: true, legacyHeaders: false }));
 
   app.get("/health", async (_req, res) => {
@@ -42,6 +44,7 @@ export function buildApp() {
 
   const api = express.Router();
   api.use(identify);
+  api.use(paymentsWebhookRouter);
   api.use("/auth", staffAuthRouter);
   api.use("/admin/products", productsRouter);
   api.use("/creator", creatorRouter);

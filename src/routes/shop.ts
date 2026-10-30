@@ -8,7 +8,8 @@ import { computeTotals, loadPricedCart } from "../services/cart";
 import { commissions } from "../services/commissions";
 import { resolveMedia, resolveOne } from "../lib/media";
 import { deleteObject } from "../lib/storage";
-import { cancelOrder, getOrder, invoiceOf, placeOrder, recordPayment } from "../services/orders";
+import { cancelOrder, getOrder, invoiceOf, placeOrder } from "../services/orders";
+import { confirmPayment, startPayment } from "../services/payments";
 import { loadConfig } from "../services/pricing";
 import { openReturn } from "../services/returns";
 import { selectedVariant, variantAvailable } from "../services/product-variants";
@@ -300,7 +301,7 @@ shopRouter.post("/checkout/totals", async (req, res) => {
 
 const orderBody = totalsBody.extend({
   address: addressBody.extend({ id: z.string().optional() }),
-  paymentMethod: z.enum(["upi", "card", "netbanking", "wallet", "cod"]),
+  paymentMethod: z.enum(["online", "cod"]),
   email: z.string().email().optional(),
   name: z.string().min(1).max(80).optional(),
   gstInvoice: z.boolean().default(true),
@@ -339,11 +340,16 @@ async function ownOrder(req: { ownerId?: string; customerId?: string }, id: stri
   return order;
 }
 
-// Stand-in for the payment gateway callback: the client (or later a verified webhook) reports the outcome.
-shopRouter.post("/orders/:id/payment", async (req, res) => {
-  const { result } = parse(z.object({ result: z.enum(["paid", "failed"]) }), req.body);
+// Online payments run through Cashfree: the browser opens the payment popup with a session created here,
+// then asks us to confirm. We read the outcome from Cashfree ourselves; the browser is never trusted.
+shopRouter.post("/orders/:id/payment/session", async (req, res) => {
   await ownOrder(req, param(req, "id"));
-  res.json(await recordPayment(param(req, "id"), result));
+  res.json(await startPayment(param(req, "id")));
+});
+
+shopRouter.post("/orders/:id/payment/verify", async (req, res) => {
+  await ownOrder(req, param(req, "id"));
+  res.json(await confirmPayment(param(req, "id")));
 });
 
 shopRouter.get("/me/orders", async (req, res) => {

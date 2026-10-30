@@ -9,6 +9,7 @@ import { audit } from "../services/audit";
 import { loadMenu, menuSchema, saveMenu } from "../services/menu";
 import { analyticsOverview } from "../services/analytics";
 import { announcementSchema, loadAnnouncement, saveAnnouncement } from "../services/announcement";
+import { loadSearchSettings, saveSearchSettings, searchSettingsSchema } from "../services/searchSettings";
 import { commissions } from "../services/commissions";
 import { issueGiftCard } from "../services/giftcards";
 import { grossMerchandiseValue } from "./admin";
@@ -272,6 +273,16 @@ adminContentRouter.get("/cms/announcement", needAdmin("cms"), async (_req, res) 
 adminContentRouter.put("/cms/announcement", needAdmin("cms"), async (req, res) => {
   const saved = await saveAnnouncement(parse(announcementSchema, req.body));
   await audit(prisma, actorLabel(req), "Updated announcement bar");
+  res.json(saved);
+});
+
+adminContentRouter.get("/cms/search", needAdmin("cms"), async (_req, res) => {
+  res.json(await loadSearchSettings());
+});
+
+adminContentRouter.put("/cms/search", needAdmin("cms"), async (req, res) => {
+  const saved = await saveSearchSettings(parse(searchSettingsSchema, req.body));
+  await audit(prisma, actorLabel(req), "Updated search bar settings");
   res.json(saved);
 });
 

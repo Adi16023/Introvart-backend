@@ -6,7 +6,11 @@ import { actorLabel, ADMIN_ROLES, canAccess, needAdmin, staffGate } from "../lib
 import { audit } from "../services/audit";
 import { ledgerFor, creatorShare } from "../services/earnings";
 import { setJobStatus } from "../services/jobs";
-import { cancelOrder, getOrder, markDelivered, recordPayment } from "../services/orders";
+import { cancelOrder, getOrder, markDelivered } from "../services/orders";
+import { cashfreeConfigured, refundOnGateway } from "../services/cashfree";
+import { env } from "../lib/env";
+import { loadPaymentSettings, paymentSettingsSchema, savePaymentSettings } from "../services/paymentSettings";
+import { confirmPayment } from "../services/payments";
 import { loadConfig } from "../services/pricing";
 import { decideReturn, RETURN_DECISIONS } from "../services/returns";
 
@@ -276,6 +280,16 @@ adminRouter.post("/returns/:id/decide", needAdmin("returns"), async (req, res) =
 
 // ───────── payments, payouts, finance ─────────
 
+adminRouter.get("/payments/settings", needAdmin("payments"), async (_req, res) => {
+  res.json({ ...(await loadPaymentSettings()), online: { configured: cashfreeConfigured(), environment: env.cashfree.environment, webhookUrl: `${env.publicUrl}/api/v1/payments/cashfree/webhook` } });
+});
+
+adminRouter.put("/payments/settings", needAdmin("payments"), async (req, res) => {
+  const saved = await savePaymentSettings(parse(paymentSettingsSchema, req.body));
+  await audit(prisma, actorLabel(req), `Cash on delivery ${saved.codEnabled ? "switched on" : "switched off"}`);
+  res.json(saved);
+});
+
 adminRouter.get("/payments", needAdmin("payments"), async (req, res) => {
   const query = parse(page.extend({ status: z.string().optional() }), req.query);
   const where = query.status ? { paymentStatus: query.status } : {};
@@ -283,7 +297,7 @@ adminRouter.get("/payments", needAdmin("payments"), async (req, res) => {
     prisma.order.count({ where }),
     prisma.order.findMany({
       where,
-      select: { id: true, customerName: true, paymentMethod: true, paymentStatus: true, payable: true, refunded: true, giftCardAmount: true, creditUsed: true, createdAt: true },
+      select: { id: true, customerName: true, paymentMethod: true, paymentStatus: true, payable: true, refunded: true, giftCardAmount: true, creditUsed: true, createdAt: true, gatewayPaymentId: true },
       orderBy: { createdAt: "desc" },
       skip: (query.page - 1) * query.limit,
       take: query.limit,
@@ -292,11 +306,10 @@ adminRouter.get("/payments", needAdmin("payments"), async (req, res) => {
   res.json({ total, page: query.page, limit: query.limit, items: rows });
 });
 
-// Manual reconciliation when the gateway outcome is known out of band.
+// Manual reconciliation: asks Cashfree for the real outcome instead of accepting a claim from the admin.
 adminRouter.post("/payments/:orderId/status", needAdmin("payments"), async (req, res) => {
-  const { result } = parse(z.object({ result: z.enum(["paid", "failed"]) }), req.body);
-  const order = await recordPayment(param(req, "orderId"), result);
-  await audit(prisma, actorLabel(req), `Payment on ${order.id} reconciled as ${result}`);
+  const order = await confirmPayment(param(req, "orderId"));
+  await audit(prisma, actorLabel(req), `Payment on ${order.id} re-checked with Cashfree: ${order.paymentStatus}`);
   res.json(order);
 });
 
@@ -306,9 +319,11 @@ adminRouter.post("/payments/:orderId/refund", needAdmin("payments"), async (req,
   if (!order) throw notFound("Order not found");
   if (!["paid", "refunded"].includes(order.paymentStatus)) throw conflict("Only paid orders can be refunded");
   if (order.refunded + amount > order.payable) throw badRequest(`At most ₹${order.payable - order.refunded} can still be refunded`);
+  // Online payments are returned through Cashfree first; if that fails nothing is recorded here.
+  const gateway = await refundOnGateway(order, amount, reason);
   const total = order.refunded + amount;
   const updated = await prisma.order.update({ where: { id: order.id }, data: { refunded: total, paymentStatus: total >= order.payable ? "refunded" : order.paymentStatus } });
-  await audit(prisma, actorLabel(req), `Refunded ₹${amount} on ${order.id}: ${reason}`);
+  await audit(prisma, actorLabel(req), `Refunded ₹${amount} on ${order.id}${gateway ? ` via Cashfree (${gateway.refund_id}, ${gateway.refund_status})` : ""}: ${reason}`);
   res.json(updated);
 });
 

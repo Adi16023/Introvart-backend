@@ -1,0 +1,5 @@
+BEGIN;
+
+ALTER TABLE "Order" ADD COLUMN "gatewayPaymentId" TEXT;
+
+COMMIT;

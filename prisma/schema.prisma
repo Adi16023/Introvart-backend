@@ -391,6 +391,7 @@ model Order {
   gstInvoice     Boolean  @default(true)
   stockReserved  Boolean  @default(false)
   settled        Boolean  @default(false) // gift card / credit / coupon already redeemed
+  gatewayPaymentId String? // Cashfree payment reference once an online payment succeeds
 
   items   OrderItem[]
   jobs    PrintJob[]

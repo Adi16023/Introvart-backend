@@ -1,6 +1,7 @@
 import type { Order, OrderItem } from "@prisma/client";
 import { json, prisma, transaction, type Tx } from "../lib/db";
-import { badRequest, conflict, displayDate, notFound, uid } from "../lib/http";
+import { badRequest, conflict, displayDate, HttpError, notFound, uid } from "../lib/http";
+import { cashfreeConfigured, refundOnGateway, terminateCashfreeOrder } from "./cashfree";
 import { computeTotals } from "./cart";
 import { frameOf, loadConfig, materialOf, pincodeInfo, PRESS_TYPES, sizeOf } from "./pricing";
 import { variantLabel } from "./product-variants";
@@ -61,8 +62,13 @@ export async function placeOrder(input: PlaceOrderInput) {
   if (input.coupon && !totals.couponOk) throw badRequest(totals.message);
   if (input.giftCardCode && !giftCard) throw badRequest("That gift card is not active");
   const method = input.paymentMethod.toLowerCase();
+  if (method === "cod" && !totals.codEnabled) throw badRequest("Cash on delivery is currently unavailable");
   if (method === "cod" && !totals.codAllowed) {
     throw badRequest(`Cash on delivery is only available under ₹${config.codLimit.toLocaleString("en-IN")} on metro and standard lanes`);
+  }
+  if (method === "online" && totals.payable > 0) {
+    if (!cashfreeConfigured()) throw new HttpError(503, "Online payments are not available right now");
+    if (input.address.phone.replace(/\D/g, "").slice(-10).length !== 10) throw badRequest("Enter a valid 10-digit phone number to pay online");
   }
 
   const orderId = uid("ORD");
@@ -227,7 +233,7 @@ async function reserveStock(tx: Tx, order: Order & { items: OrderItem[] }) {
   await tx.order.update({ where: { id: order.id }, data: { stockReserved: true } });
 }
 
-// The single hook a payment gateway webhook will call once one is wired in.
+// Called by payments.ts once Cashfree confirms the outcome; nothing else may report a payment as paid.
 export async function recordPayment(orderId: string, result: "paid" | "failed") {
   await transaction(async (tx) => {
     const order = await tx.order.findUnique({ where: { id: orderId }, include: { items: true } });
@@ -253,6 +259,14 @@ export async function recordPayment(orderId: string, result: "paid" | "failed") 
 const CANCELLABLE = ["pending_payment", "confirmed"];
 
 export async function cancelOrder(orderId: string) {
+  // A paid online order is refunded on Cashfree first, so a failed refund leaves the order untouched.
+  const before = await prisma.order.findUnique({ where: { id: orderId }, include: { items: true } });
+  if (before && before.paymentStatus === "pending" && before.paymentMethod === "ONLINE" && cashfreeConfigured()) {
+    await terminateCashfreeOrder(before.id).catch(() => undefined);
+  }
+  if (before && before.paymentStatus === "paid" && before.settled && before.items.every((item) => CANCELLABLE.includes(item.status))) {
+    await refundOnGateway(before, before.payable - before.refunded, "Order cancelled");
+  }
   await transaction(async (tx) => {
     const order = await tx.order.findUnique({ where: { id: orderId }, include: { items: true } });
     if (!order) throw notFound("Order not found");

@@ -1,7 +1,18 @@
-import { transaction } from "../lib/db";
+import { prisma, transaction } from "../lib/db";
 import { badRequest, conflict, notFound, uid } from "../lib/http";
+import { refundOnGateway } from "./cashfree";
 import { PRESS_TYPES } from "./pricing";
 import { jobSpec } from "./orders";
+
+// A return refund on an online order goes back through Cashfree before the decision is recorded,
+// so a failed refund leaves the return open to retry.
+async function refundReturnOnGateway(returnId: string) {
+  const found = await prisma.returns.findUnique({ where: { id: returnId }, include: { order: { include: { items: true } } } });
+  if (!found || ["refunded", "rejected", "closed"].includes(found.status)) return;
+  const item = found.order.items.find((entry) => entry.id === found.itemId || (!found.itemId && entry.title === found.itemTitle));
+  if (!item || found.order.paymentMethod === "COD") return;
+  await refundOnGateway(found.order, item.unitPrice * item.quantity, `Return ${returnId}`);
+}
 
 export async function openReturn(input: {
   customerId: string;
@@ -45,6 +56,7 @@ export async function openReturn(input: {
 export const RETURN_DECISIONS = ["refunded", "replacement", "reprint", "rejected", "evidence_review", "closed"] as const;
 
 export async function decideReturn(returnId: string, decision: (typeof RETURN_DECISIONS)[number]) {
+  if (decision === "refunded") await refundReturnOnGateway(returnId);
   return transaction(async (tx) => {
     const found = await tx.returns.findUnique({ where: { id: returnId }, include: { order: { include: { items: true } } } });
     if (!found) throw notFound("Return not found");

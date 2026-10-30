@@ -1,6 +1,7 @@
 import type { CartItem, Product, ProductVariant } from "@prisma/client";
 import type { Db } from "../lib/db";
 import { couponDiscount, pincodeInfo, unitPrice, type PricingConfig } from "./pricing";
+import { loadPaymentSettings } from "./paymentSettings";
 import { variantAvailable, variantLabel } from "./product-variants";
 
 export type PricedLine = CartItem & {
@@ -112,6 +113,7 @@ export async function computeTotals(db: Db, config: PricingConfig, input: Totals
   const taxable = subtotal - discount;
   const gst = Math.round(taxable - taxable / (1 + config.taxRate));
 
+  const payments = await loadPaymentSettings(db);
   const totals = {
     subtotal,
     discount,
@@ -125,7 +127,8 @@ export async function computeTotals(db: Db, config: PricingConfig, input: Totals
     giftCardOk: giftCode ? Boolean(giftCard) : true,
     serviceable: input.pincode ? pin.ok : true,
     eta: pin.eta,
-    codAllowed: payable > 0 && payable <= config.codLimit && pin.ok && !pin.remote,
+    codEnabled: payments.codEnabled,
+    codAllowed: payments.codEnabled && payable > 0 && payable <= config.codLimit && pin.ok && !pin.remote,
   };
   return { totals, lines, couponRow, giftCard, customer };
 }

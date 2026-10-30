@@ -20,6 +20,14 @@ export const env = {
     .filter(Boolean),
   returnWindowDays: Number(process.env.RETURN_WINDOW_DAYS ?? 7),
   publicUrl,
+  // Public address of the storefront, used to send shoppers back to their order after a payment.
+  frontendUrl: (process.env.FRONTEND_URL ?? "").replace(/\/$/, ""),
+  cashfree: {
+    appId: process.env.CASHFREE_APP_ID ?? "",
+    secretKey: process.env.CASHFREE_SECRET_KEY ?? "",
+    environment: (process.env.CASHFREE_ENV ?? "sandbox").toLowerCase() === "production" ? ("production" as const) : ("sandbox" as const),
+    apiVersion: process.env.CASHFREE_API_VERSION ?? "2025-01-01",
+  },
   s3: {
     bucket: process.env.S3_BUCKET ?? "",
     endpoint: process.env.AWS_ENDPOINT_URL_S3 ?? "",

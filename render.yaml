@@ -33,5 +33,13 @@ services:
         sync: false
       - key: AWS_REGION
         value: us-east-2
+      - key: CASHFREE_APP_ID
+        sync: false
+      - key: CASHFREE_SECRET_KEY
+        sync: false
+      - key: CASHFREE_ENV # sandbox while testing, production for live payments
+        value: sandbox
+      - key: FRONTEND_URL # the storefront address, e.g. https://introvart.vercel.app
+        sync: false
       - key: API_PUBLIC_URL # set to the final public URL, e.g. https://api.introvart.in
         sync: false

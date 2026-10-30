@@ -7,11 +7,14 @@ import { canonicalMediaUrl, keyFromRef } from "../lib/storage";
 
 const tabIds = ["shop", "collections", "help"] as const;
 const categoryIds = ["new-arrivals", "featured", "artwork-gifts", "all-artwork"] as const;
+const isBuiltin = (list: readonly string[], id: string) => list.includes(id);
 
 const text = (max: number) => z.string().trim().min(1).max(max);
 const href = z.string().trim().min(1).max(500)
   .refine((value) => /^\/(?!\/)/.test(value) || /^https:\/\//i.test(value), "Use a path such as /shop or an https:// link");
 const image = z.string().trim().max(2000).default("");
+const customId = z.string().trim().regex(/^custom-[A-Za-z0-9-]{1,60}$/, "Invalid item id");
+const linkSchema = z.object({ title: text(40), href });
 
 const bannerSchema = z.object({
   id: z.string().trim().min(1).max(80),
@@ -24,28 +27,51 @@ const bannerSchema = z.object({
 });
 
 export const menuSchema = z.object({
-  tabs: z.array(z.object({ id: z.enum(tabIds), label: text(30), visible: z.boolean() })).length(3),
+  // Built-in menus keep their fixed ids; anything else is a custom link menu with its own href.
+  tabs: z.array(z.object({
+    id: z.union([z.enum(tabIds), customId]),
+    label: text(30),
+    visible: z.boolean(),
+    href: href.optional(),
+  })).min(3).max(8),
   shop: z.object({
-    categories: z.array(z.object({ id: z.enum(categoryIds), title: text(40), href, visible: z.boolean() })).length(4),
+    // Custom headings list their own links in place of collections.
+    categories: z.array(z.object({
+      id: z.union([z.enum(categoryIds), customId]),
+      title: text(40),
+      href,
+      visible: z.boolean(),
+      links: z.array(linkSchema).max(12).optional(),
+    })).min(4).max(12),
     banners: z.array(bannerSchema).max(3),
   }),
-  collections: z.object({ heading: text(60), banners: z.array(bannerSchema).max(3) }),
+  collections: z.object({
+    heading: text(60),
+    banners: z.array(bannerSchema).max(3),
+    extraLinks: z.array(linkSchema).max(10).default([]),
+  }),
   help: z.object({
     headline: text(120),
     tiles: z.array(z.object({ title: text(40), href, image })).max(3),
-    links: z.array(z.object({ title: text(40), href })).max(10),
+    links: z.array(linkSchema).max(10),
   }),
 }).superRefine((menu, context) => {
-  if (new Set(menu.tabs.map((tab) => tab.id)).size !== menu.tabs.length) {
-    context.addIssue({ code: "custom", path: ["tabs"], message: "Each header menu must appear exactly once" });
+  const ids = menu.tabs.map((tab) => tab.id);
+  if (new Set(ids).size !== ids.length || !tabIds.every((id) => ids.includes(id))) {
+    context.addIssue({ code: "custom", path: ["tabs"], message: "Keep each built-in menu once, with no duplicates" });
+  }
+  if (menu.tabs.some((tab) => !isBuiltin(tabIds, tab.id) && !tab.href)) {
+    context.addIssue({ code: "custom", path: ["tabs"], message: "Every custom menu needs a link" });
   }
   if (!menu.tabs.some((tab) => tab.visible)) {
     context.addIssue({ code: "custom", path: ["tabs"], message: "Keep at least one header menu visible" });
   }
-  if (new Set(menu.shop.categories.map((category) => category.id)).size !== menu.shop.categories.length) {
-    context.addIssue({ code: "custom", path: ["shop", "categories"], message: "Each shop heading must appear exactly once" });
+  const categories = menu.shop.categories.map((category) => category.id);
+  if (new Set(categories).size !== categories.length || !categoryIds.every((id) => categories.includes(id))) {
+    context.addIssue({ code: "custom", path: ["shop", "categories"], message: "Keep each built-in shop heading once, with no duplicates" });
   }
 });
+
 
 export type MenuConfig = z.infer<typeof menuSchema>;
 
@@ -64,7 +90,7 @@ export const DEFAULT_MENU: MenuConfig = {
     ],
     banners: [],
   },
-  collections: { heading: "All collections", banners: [] },
+  collections: { heading: "All collections", banners: [], extraLinks: [] },
   help: {
     headline: "Here to help you find your next favourite piece.",
     tiles: [

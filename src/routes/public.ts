@@ -5,6 +5,9 @@ import { notFound, param, parse, uid } from "../lib/http";
 import { canonicalMediaUrl } from "../lib/storage";
 import { loadMenu } from "../services/menu";
 import { loadAnnouncement } from "../services/announcement";
+import { loadSearchSettings } from "../services/searchSettings";
+import { cashfreeConfigured } from "../services/cashfree";
+import { loadPaymentSettings } from "../services/paymentSettings";
 import { productsByIds, listProducts, matches, present, type ProductWithArtist } from "../services/catalog";
 import { balanceOf, issueGiftCard } from "../services/giftcards";
 import { fromPrice, loadConfig, pincodeInfo, unitPrice } from "../services/pricing";
@@ -44,7 +47,8 @@ const publicArtist = (artist: {
 publicRouter.get("/config", async (_req, res) => {
   const config = await loadConfig();
   const { capacity: _c, holidays: _h, ...rest } = config;
-  res.json(rest);
+  const payments = await loadPaymentSettings();
+  res.json({ ...rest, codEnabled: payments.codEnabled, onlinePayments: cashfreeConfigured() });
 });
 
 publicRouter.get("/banners", async (_req, res) => {
@@ -173,6 +177,10 @@ publicRouter.get("/menu", async (_req, res) => {
 
 publicRouter.get("/announcement", async (_req, res) => {
   res.json(await loadAnnouncement());
+});
+
+publicRouter.get("/search/settings", async (_req, res) => {
+  res.json(await loadSearchSettings());
 });
 
 publicRouter.get("/collections", async (_req, res) => {
