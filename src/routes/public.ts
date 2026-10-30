@@ -224,9 +224,13 @@ publicRouter.get("/search/suggest", async (req, res) => {
     if (product.artist.name.toLowerCase().includes(needle) || product.category.toLowerCase().includes(needle) || product.tags.some((tag) => tag.toLowerCase().includes(needle))) return 3;
     return needle.length >= 3 && matches(q, product, product.artist.name) ? 4 : -1;
   };
-  const ranked = (products as ProductWithArtist[])
+  const scored = (products as ProductWithArtist[])
     .map((product) => ({ product, score: rank(product) }))
-    .filter((entry) => entry.score >= 0)
+    .filter((entry) => entry.score >= 0);
+  // Loose matches only fill in when nothing matches the typed letters directly (e.g. a typo).
+  const direct = scored.some((entry) => entry.score <= 3);
+  const ranked = scored
+    .filter((entry) => !direct || entry.score <= 3)
     .sort((a, b) => a.score - b.score || b.product.rating - a.product.rating)
     .slice(0, limit);
   res.json({
