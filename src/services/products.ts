@@ -16,6 +16,7 @@ export const optionSchema = z.object({
   linkedTo: z.string().max(500).default(""),
 });
 export const variantSchema = z.object({
+  id: z.string().optional(),
   optionValues: z.array(z.string().trim().min(1).max(200)).max(3).default([]),
   sku: z.string().max(200).default(""),
   barcode: z.string().max(200).default(""),
@@ -141,7 +142,7 @@ async function insertProduct(tx: Tx, input: ProductInput) {
   return tx.product.create({
     data: {
       ...productData(input, artistId),
-      variants: { create: input.variants.map((variant, sort) => ({ ...variant, unitPriceMeasure: json(variant.unitPriceMeasure), sort })) },
+      variants: { create: input.variants.map(({ id: _variantId, ...variant }, sort) => ({ ...variant, unitPriceMeasure: json(variant.unitPriceMeasure), sort })) },
     },
     include: productInclude,
   });
@@ -152,6 +153,41 @@ export async function createProduct(input: ProductInput, actor: string) {
     if (await tx.product.findUnique({ where: { slug: input.handle }, select: { id: true } })) throw conflict(`Product handle "${input.handle}" already exists`);
     const result = await insertProduct(tx, input);
     await audit(tx, actor, `Created product "${input.title}"`);
+    return result;
+  });
+}
+
+export async function updateProduct(id: string, input: ProductInput, actor: string) {
+  return transaction(async (tx) => {
+    const existing = await tx.product.findUnique({ where: { id }, include: { variants: true } });
+    if (!existing) throw badRequest("Product not found");
+    const duplicate = await tx.product.findUnique({ where: { slug: input.handle }, select: { id: true } });
+    if (duplicate && duplicate.id !== id) throw conflict(`Product handle "${input.handle}" already exists`);
+    const existingVariantIds = new Set(existing.variants.map((variant) => variant.id));
+    for (const variant of input.variants) {
+      if (variant.id && !existingVariantIds.has(variant.id)) throw badRequest("A variant does not belong to this product");
+    }
+
+    const artistId = await productArtist(tx, input);
+    const row = productData(input, artistId);
+    const { id: _productId, rooms: _rooms, occasions: _occasions, orientation: _orientation, colours: _colours, ...productFields } = row;
+    await tx.product.update({ where: { id }, data: productFields });
+
+    const retainedIds = input.variants.flatMap((variant) => variant.id ? [variant.id] : []);
+    await tx.productVariant.deleteMany({
+      where: { productId: id, ...(retainedIds.length ? { id: { notIn: retainedIds } } : {}) },
+    });
+    for (const [sort, variant] of input.variants.entries()) {
+      const { id: variantId, ...variantFields } = variant;
+      const data = { ...variantFields, unitPriceMeasure: json(variant.unitPriceMeasure), sort };
+      if (variantId) {
+        await tx.productVariant.update({ where: { id: variantId }, data });
+      } else {
+        await tx.productVariant.create({ data: { ...data, productId: id } });
+      }
+    }
+    const result = await tx.product.findUniqueOrThrow({ where: { id }, include: productInclude });
+    await audit(tx, actor, `Updated product "${input.title}"`);
     return result;
   });
 }

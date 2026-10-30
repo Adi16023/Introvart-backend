@@ -4,6 +4,7 @@ import { prisma } from "../lib/db";
 import { badRequest, conflict, notFound, param, parse, slugify, uid } from "../lib/http";
 import { actorLabel, needAdmin, roleMatrix, staffGate } from "../lib/identity";
 import { resolveOne } from "../lib/media";
+import { canonicalMediaUrl } from "../lib/storage";
 import { audit } from "../services/audit";
 import { commissions } from "../services/commissions";
 import { issueGiftCard } from "../services/giftcards";
@@ -32,7 +33,7 @@ adminContentRouter.get("/cms", needAdmin("cms"), async (_req, res) => {
     prisma.collection.findMany({ orderBy: { sort: "asc" } }),
     prisma.occasion.findMany({ orderBy: { sort: "asc" } }),
   ]);
-  res.json({ banners, posts, policies, collections, occasions });
+  res.json({ banners, posts, policies, collections: collections.map((collection) => ({ ...collection, image: canonicalMediaUrl(collection.image) })), occasions });
 });
 
 adminContentRouter.post("/cms/banners", needAdmin("cms"), async (req, res) => {
@@ -99,7 +100,7 @@ adminContentRouter.post("/cms/collections", needAdmin("cms"), async (req, res) =
   const image = body.image ? await resolveOne(req, body.image, ["cms"]) : "";
   const collection = await prisma.collection.create({ data: { slug, ...body, image } });
   await audit(prisma, actorLabel(req), `Created collection "${collection.title}"`);
-  res.status(201).json(collection);
+  res.status(201).json({ ...collection, image: canonicalMediaUrl(collection.image) });
 });
 
 adminContentRouter.patch("/cms/collections/:slug", needAdmin("cms"), async (req, res) => {
@@ -107,7 +108,7 @@ adminContentRouter.patch("/cms/collections/:slug", needAdmin("cms"), async (req,
   if (body.image) body.image = await resolveOne(req, body.image, ["cms"]);
   const collection = await prisma.collection.update({ where: { slug: param(req, "slug") }, data: body });
   await audit(prisma, actorLabel(req), `Updated collection "${collection.title}"`);
-  res.json(collection);
+  res.json({ ...collection, image: canonicalMediaUrl(collection.image) });
 });
 
 adminContentRouter.delete("/cms/collections/:slug", needAdmin("cms"), async (req, res) => {

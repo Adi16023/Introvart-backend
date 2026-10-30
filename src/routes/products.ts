@@ -4,7 +4,7 @@ import { z } from "zod";
 import { prisma } from "../lib/db";
 import { badRequest, parse } from "../lib/http";
 import { actorLabel, needAdmin, staffGate } from "../lib/identity";
-import { createProduct, importProducts, productInclude, productSchema } from "../services/products";
+import { createProduct, importProducts, productInclude, productSchema, updateProduct } from "../services/products";
 import { csvSummary, readProductCsv } from "../services/product-csv";
 
 export const productsRouter = Router();
@@ -24,9 +24,20 @@ productsRouter.get("/", async (req, res) => {
   res.json({ total, page: query.page, limit: query.limit, items });
 });
 
+productsRouter.get("/:id", async (req, res) => {
+  const product = await prisma.product.findUnique({ where: { id: String(req.params.id) }, include: productInclude });
+  if (!product) throw badRequest("Product not found");
+  res.json(product);
+});
+
 productsRouter.post("/", async (req, res) => {
   const input = parse(productSchema, req.body);
   res.status(201).json(await createProduct(input, actorLabel(req)));
+});
+
+productsRouter.patch("/:id", async (req, res) => {
+  const input = parse(productSchema, req.body);
+  res.json(await updateProduct(String(req.params.id), input, actorLabel(req)));
 });
 
 const csvUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024, files: 1 } }).single("file");

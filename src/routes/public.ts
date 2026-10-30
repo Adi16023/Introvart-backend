@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/db";
 import { notFound, param, parse, uid } from "../lib/http";
+import { canonicalMediaUrl } from "../lib/storage";
 import { productsByIds, listProducts, matches, present, type ProductWithArtist } from "../services/catalog";
 import { balanceOf, issueGiftCard } from "../services/giftcards";
 import { fromPrice, loadConfig, pincodeInfo, unitPrice } from "../services/pricing";
@@ -60,7 +61,7 @@ publicRouter.get("/home", async (_req, res) => {
   ]);
   res.json({
     banners,
-    collections,
+    collections: collections.map((collection) => ({ ...collection, image: canonicalMediaUrl(collection.image) })),
     occasions,
     artists: artists.map(publicArtist),
     trending: (top as ProductWithArtist[]).map((a) => present(config, a)),
@@ -157,14 +158,15 @@ publicRouter.get("/artists/:slug", async (req, res) => {
 // ───────── curation ─────────
 
 publicRouter.get("/collections", async (_req, res) => {
-  res.json(await prisma.collection.findMany({ orderBy: { sort: "asc" } }));
+  const collections = await prisma.collection.findMany({ orderBy: { sort: "asc" } });
+  res.json(collections.map((collection) => ({ ...collection, image: canonicalMediaUrl(collection.image) })));
 });
 
 publicRouter.get("/collections/:slug", async (req, res) => {
   const collection = await prisma.collection.findUnique({ where: { slug: param(req, "slug") } });
   if (!collection) throw notFound("Collection not found");
   const items = (await productsByIds(collection.ids)).filter((a) => a.status === "approved");
-  res.json({ ...collection, products: items });
+  res.json({ ...collection, image: canonicalMediaUrl(collection.image), products: items });
 });
 
 publicRouter.get("/occasions", async (_req, res) => {

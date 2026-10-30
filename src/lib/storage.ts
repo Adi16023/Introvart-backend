@@ -57,6 +57,11 @@ export function keyFromRef(ref: string) {
   }
 }
 
+export function canonicalMediaUrl(ref: string) {
+  const key = keyFromRef(ref);
+  return key ? mediaUrl(key) : ref;
+}
+
 let client: S3Client | null = null;
 function s3() {
   if (!env.s3.bucket || !env.s3.endpoint) throw new HttpError(503, "File storage is not configured");
