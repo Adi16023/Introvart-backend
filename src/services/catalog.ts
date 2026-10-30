@@ -1,8 +1,8 @@
 import type { Artist, Product } from "@prisma/client";
 import { prisma } from "../lib/db";
 import { fromPrice, loadConfig, type PricingConfig } from "./pricing";
-import { productInclude } from "./products";
-import type { ProductVariant, ProductImage } from "@prisma/client";
+import { productImageSchema, productInclude } from "./products";
+import type { ProductVariant } from "@prisma/client";
 import { variantAvailable } from "./product-variants";
 
 function edit(a: string, b: string) {
@@ -20,10 +20,10 @@ function edit(a: string, b: string) {
   return row[b.length];
 }
 
-export function matches(query: string, artwork: Product, artistName: string) {
+export function matches(query: string, product: Product, artistName: string) {
   const q = query.toLowerCase().trim();
   if (!q) return true;
-  const hay = [artwork.title, artwork.story, artwork.category, artwork.style, artistName, ...artwork.tags, ...artwork.colours, ...artwork.rooms, ...artwork.occasions]
+  const hay = [product.title, product.story, product.category, product.style, artistName, ...product.tags, ...product.colours, ...product.rooms, ...product.occasions]
     .join(" ")
     .toLowerCase();
   if (hay.includes(q)) return true;
@@ -32,12 +32,13 @@ export function matches(query: string, artwork: Product, artistName: string) {
 }
 
 type ArtistCard = Pick<Artist, "id" | "slug" | "name" | "city" | "verified" | "boostedUntil">;
-export type ArtworkWithArtist = Product & { artist: ArtistCard; variants?: ProductVariant[]; images?: ProductImage[] };
+export type ProductWithArtist = Product & { artist: ArtistCard; variants?: ProductVariant[] };
 
-export function present(config: PricingConfig, artwork: ArtworkWithArtist) {
-  const { boostedUntil: _boost, ...artist } = artwork.artist;
-  const { sourceRows: _source, ...product } = artwork;
-  return { ...product, artist, fromPrice: fromPrice(config, artwork) };
+export function present(config: PricingConfig, product: ProductWithArtist) {
+  const { boostedUntil: _boost, ...artist } = product.artist;
+  const { sourceRows: _source, ...publicProduct } = product;
+  const images = productImageSchema.array().parse(product.images);
+  return { ...publicProduct, images, artist, fromPrice: fromPrice(config, product) };
 }
 
 export type CatalogQuery = {
@@ -56,7 +57,7 @@ export type CatalogQuery = {
 
 const artistSelect = { select: { id: true, slug: true, name: true, city: true, verified: true, boostedUntil: true } } as const;
 
-export async function listArtworks(query: CatalogQuery) {
+export async function listProducts(query: CatalogQuery) {
   const config = await loadConfig();
   const mode = query.mode ?? "all";
   let ids: string[] | null = null;
@@ -77,7 +78,7 @@ export async function listArtworks(query: CatalogQuery) {
   });
 
   const value = (query.value ?? "").toLowerCase();
-  let list = rows as ArtworkWithArtist[];
+  let list = rows;
   if (mode === "occasion") list = list.filter((a) => a.occasions.some((x) => x.toLowerCase() === value));
   if (mode === "colour") list = list.filter((a) => a.colours.some((x) => x.toLowerCase() === value));
   if (mode === "room") list = list.filter((a) => a.rooms.some((x) => x.toLowerCase().replace(/\s+/g, "-") === value));
@@ -86,14 +87,14 @@ export async function listArtworks(query: CatalogQuery) {
   if (query.inStock) list = list.filter((a) => a.variants?.length ? a.variants.some((variant) => variantAvailable(variant)) : a.stock === null || a.stock > 0);
   if (query.q?.trim()) list = list.filter((a) => matches(query.q!, a, a.artist.name));
 
-  const price = (a: ArtworkWithArtist) => fromPrice(config, a);
+  const price = (a: ProductWithArtist) => fromPrice(config, a);
   if (query.sort === "price-asc") list = [...list].sort((a, b) => price(a) - price(b));
   else if (query.sort === "price-desc") list = [...list].sort((a, b) => price(b) - price(a));
   else if (query.sort === "rating") list = [...list].sort((a, b) => b.rating - a.rating);
   else if (query.sort === "newest") list = [...list].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
   else {
     // Featured: studios with an approved, running boost come first.
-    const boosted = (a: ArtworkWithArtist) => (a.artist.boostedUntil && a.artist.boostedUntil.getTime() > Date.now() ? 1 : 0);
+    const boosted = (a: ProductWithArtist) => (a.artist.boostedUntil && a.artist.boostedUntil.getTime() > Date.now() ? 1 : 0);
     list = [...list].sort((a, b) => boosted(b) - boosted(a));
   }
 
@@ -107,7 +108,7 @@ export async function listArtworks(query: CatalogQuery) {
   };
 }
 
-export async function artworksByIds(ids: string[]) {
+export async function productsByIds(ids: string[]) {
   if (!ids.length) return [];
   const config = await loadConfig();
   const rows = await prisma.product.findMany({
@@ -115,7 +116,7 @@ export async function artworksByIds(ids: string[]) {
     include: { artist: artistSelect, ...productInclude },
   });
   const order = new Map(ids.map((id, index) => [id, index]));
-  return (rows as ArtworkWithArtist[])
+  return rows
     .sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0))
     .map((a) => present(config, a));
 }

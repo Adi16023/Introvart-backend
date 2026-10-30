@@ -12,35 +12,33 @@ const parseDate = (text: string, fallback = new Date()) => {
 
 async function wipe() {
   await prisma.$transaction([
-    prisma.reviewVote.deleteMany(),
     prisma.upload.deleteMany(),
     prisma.review.deleteMany(),
     prisma.printJob.deleteMany(),
-    prisma.returnCase.deleteMany(),
+    prisma.returns.deleteMany(),
     prisma.orderItem.deleteMany(),
     prisma.order.deleteMany(),
     prisma.cartItem.deleteMany(),
     prisma.wishlistItem.deleteMany(),
     prisma.follow.deleteMany(),
     prisma.recentView.deleteMany(),
-    prisma.searchLog.deleteMany(),
-    prisma.savedDesign.deleteMany(),
+    prisma.searchHistory.deleteMany(),
+    prisma.saved.deleteMany(),
     prisma.payout.deleteMany(),
     prisma.promotion.deleteMany(),
     prisma.commission.deleteMany(),
     prisma.ticket.deleteMany(),
-    prisma.b2BLead.deleteMany(),
-    prisma.auditLog.deleteMany(),
+    prisma.bulkOrder.deleteMany(),
+    prisma.activity.deleteMany(),
     prisma.giftCard.deleteMany(),
     prisma.coupon.deleteMany(),
-    prisma.address.deleteMany(),
     prisma.customer.deleteMany(),
     prisma.product.deleteMany(),
     prisma.artist.deleteMany(),
     prisma.collection.deleteMany(),
     prisma.occasion.deleteMany(),
     prisma.banner.deleteMany(),
-    prisma.post.deleteMany(),
+    prisma.blog.deleteMany(),
     prisma.policy.deleteMany(),
     prisma.config.deleteMany(),
   ]);
@@ -82,26 +80,32 @@ async function main() {
   await prisma.artist.createMany({ data: seed.artists.map((a) => ({ ...a, gst: a.gst ?? null })) });
 
   await prisma.product.createMany({
-    data: seed.artworks.map((a, index) => ({
+    data: seed.products.map((a, index) => ({
       ...a,
       moderatorNote: a.moderatorNote ?? null,
       personalization: a.personalization ? json(a.personalization) : undefined,
-      createdAt: new Date(now - (seed.artworks.length - index) * 60_000),
+      createdAt: new Date(now - (seed.products.length - index) * 60_000),
     })),
   });
-  const artworkByTitle = new Map(seed.artworks.map((a) => [a.title, a.id]));
+  const productByTitle = new Map(seed.products.map((a) => [a.title, a.id]));
 
   await prisma.review.createMany({
     data: seed.reviews.map((r, index) => ({ ...r, photo: r.photo ?? null, createdAt: new Date(now - (seed.reviews.length - index) * 3_600_000) })),
   });
 
-  await prisma.customer.createMany({ data: seed.customers.map((c) => ({ ...c })) });
-  await prisma.address.createMany({ data: seed.addresses.map((a) => ({ ...a, customerId: "c1" })) });
-  await prisma.savedDesign.createMany({ data: seed.designs.map((d) => ({ ...d, ownerId: "c1" })) });
-  await prisma.wishlistItem.createMany({ data: seed.wishlist.map((artworkId) => ({ ownerId: "c1", artworkId })) });
+  await prisma.customer.createMany({
+    data: seed.customers.map((customer) => ({
+      ...customer,
+      addresses: json(seed.addresses
+        .filter((address) => customer.id === "c1")
+        .map((address) => ({ ...address, customerId: customer.id, createdAt: new Date(now).toISOString() }))),
+    })),
+  });
+  await prisma.saved.createMany({ data: seed.designs.map((d) => ({ ...d, ownerId: "c1" })) });
+  await prisma.wishlistItem.createMany({ data: seed.wishlist.map((productId) => ({ ownerId: "c1", productId })) });
   await prisma.follow.createMany({ data: seed.follows.map((artistId) => ({ ownerId: "c1", artistId })) });
-  await prisma.recentView.createMany({ data: seed.recent.map((artworkId, i) => ({ ownerId: "c1", artworkId, at: new Date(now - i * 60_000) })) });
-  await prisma.searchLog.createMany({ data: seed.recentSearches.map((query, i) => ({ ownerId: "c1", query, results: 1, createdAt: new Date(now - i * 60_000) })) });
+  await prisma.recentView.createMany({ data: seed.recent.map((productId, i) => ({ ownerId: "c1", productId, at: new Date(now - i * 60_000) })) });
+  await prisma.searchHistory.createMany({ data: seed.recentSearches.map((query, i) => ({ ownerId: "c1", query, results: 1, createdAt: new Date(now - i * 60_000) })) });
 
   for (const order of seed.orders) {
     const createdAt = parseDate(order.placedAt);
@@ -135,7 +139,7 @@ async function main() {
         items: {
           create: order.items.map((item) => ({
             id: item.id,
-            artworkId: artworkByTitle.get(item.title),
+            productId: productByTitle.get(item.title),
             title: item.title,
             artistName: item.artistName,
             image: item.image,
@@ -161,9 +165,9 @@ async function main() {
   // Return cases in the demo data point at older orders that are not in the order list; give them a delivered stub.
   const known = new Set(seed.orders.map((o) => o.id));
   for (const ret of seed.returns.filter((r) => !known.has(r.orderId))) {
-    const artwork = seed.artworks.find((a) => a.title === ret.itemTitle);
+    const product = seed.products.find((a) => a.title === ret.itemTitle);
     const buyer = seed.customers[1];
-    const unitPrice = artwork?.basePrice ?? 0;
+    const unitPrice = product?.basePrice ?? 0;
     await prisma.order.create({
       data: {
         id: ret.orderId,
@@ -182,18 +186,18 @@ async function main() {
         items: {
           create: [{
             id: `oi-${ret.orderId}`,
-            artworkId: artwork?.id,
+            productId: product?.id,
             title: ret.itemTitle,
-            artistName: artwork?.artistId ?? "",
-            image: artwork?.image ?? "",
-            fulfilment: artwork?.fulfilment ?? "platform_pod",
+            artistName: product?.artistId ?? "",
+            image: product?.image ?? "",
+            fulfilment: product?.fulfilment ?? "platform_pod",
             sizeLabel: "A2",
             materialLabel: "Matte",
             frameLabel: "Oak",
             quantity: 1,
             unitPrice,
             status: "return_requested",
-            creatorId: artwork?.artistId,
+            creatorId: product?.artistId,
             deliveredAt: parseDate("28 Sep 2026"),
           }],
         },
@@ -201,7 +205,7 @@ async function main() {
     });
   }
 
-  await prisma.returnCase.createMany({
+  await prisma.returns.createMany({
     data: seed.returns.map((r) => {
       const order = seed.orders.find((o) => o.id === r.orderId);
       const item = order?.items.find((i) => i.title === r.itemTitle);
@@ -220,17 +224,17 @@ async function main() {
 
   await prisma.giftCard.createMany({ data: seed.giftCards.map((g) => ({ ...g })) });
   await prisma.ticket.createMany({ data: seed.tickets.map((t) => ({ ...t, ownerId: customerByName.get(t.from), orderId: t.orderId ?? null })) });
-  await prisma.b2BLead.createMany({ data: seed.b2b.map((b) => ({ ...b })) });
-  await prisma.auditLog.createMany({ data: seed.audit.map((a) => ({ id: a.id, actor: a.actor, action: a.action, at: parseDate(a.at) })) });
+  await prisma.bulkOrder.createMany({ data: seed.b2b.map((b) => ({ ...b })) });
+  await prisma.activity.createMany({ data: seed.audit.map((a) => ({ id: a.id, actor: a.actor, action: a.action, at: parseDate(a.at) })) });
   await prisma.banner.createMany({ data: seed.banners.map((b, sort) => ({ ...b, sort })) });
 
   await prisma.collection.createMany({ data: collections.map((c, sort) => ({ ...c, sort })) });
   await prisma.occasion.createMany({ data: occasions.map((o, sort) => ({ ...o, sort })) });
-  await prisma.post.createMany({ data: posts.map((p) => ({ ...p, body: p.lede })) });
+  await prisma.blog.createMany({ data: posts.map((p) => ({ ...p, body: p.lede })) });
   await prisma.policy.createMany({ data: policies.map((p) => ({ ...p })) });
 
   console.log(
-    `Seeded ${seed.artists.length} artists, ${seed.artworks.length} artworks, ${seed.customers.length} customers, ${seed.orders.length} orders.`,
+    `Seeded ${seed.artists.length} artists, ${seed.products.length} products, ${seed.customers.length} customers, ${seed.orders.length} orders.`,
   );
 }
 

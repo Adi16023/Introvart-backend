@@ -20,7 +20,7 @@ enum StaffRole {
   creator
 }
 
-model StaffUser {
+model Admin {
   id           String    @id @default(cuid())
   email        String    @unique
   name         String
@@ -70,7 +70,7 @@ model Artist {
   boostedUntil      DateTime?
   createdAt         DateTime  @default(now())
 
-  artworks    Product[]
+  products    Product[]
   commissions Commission[]
   payouts     Payout[]
   coupons     Coupon[]
@@ -88,31 +88,14 @@ model Customer {
   referral  String   @default("")
   createdAt DateTime @default(now())
 
-  addresses Address[]
+  addresses Json @default("[]")
 
   @@index([phone])
   @@index([email])
 }
 
-model Address {
-  id         String   @id
-  customerId String
-  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  name       String
-  phone      String
-  line       String
-  city       String
-  state      String
-  pincode    String
-  label      String   @default("Home")
-  createdAt  DateTime @default(now())
-
-  @@index([customerId])
-}
-
 // ───────── Catalogue ─────────
 
-// One catalogue table for products and artwork; "Artwork" remains an API/view compatibility name.
 model Product {
   id              String   @id
   slug            String   @unique
@@ -151,63 +134,52 @@ model Product {
   metafields      Json     @default("{}")
   googleShopping  Json     @default("{}")
   sourceRows      Json     @default("[]")
+  images          Json     @default("[]")
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  reviews Review[]
+  reviews  Review[]
   variants ProductVariant[]
-  images   ProductImage[]
 
   @@index([artistId, status])
   @@index([status])
-  @@map("products")
+  @@map("Products")
 }
 
 model ProductVariant {
-  id                 String  @id @default(cuid())
-  productId          String
-  product            Product @relation(fields: [productId], references: [id], onDelete: Cascade)
-  optionValues       String[]
-  sku                String  @default("")
-  barcode            String  @default("")
-  price              Float
-  compareAtPrice     Float?
-  inventoryTracker   String  @default("")
-  inventoryQuantity  Int     @default(0)
-  inventoryPolicy    String  @default("deny")
-  fulfillmentService String  @default("manual")
-  requiresShipping   Boolean @default(true)
-  taxable            Boolean @default(true)
-  grams              Float   @default(0)
-  weightUnit         String  @default("kg")
-  image              String  @default("")
-  taxCode            String  @default("")
-  costPerItem        Float?
-  unitPriceMeasure   Json    @default("{}")
-  packedLength       Float?
-  packedWidth        Float?
-  packedHeight       Float?
-  packedDimensionUnit String @default("")
-  sort               Int     @default(0)
+  id                  String   @id @default(cuid())
+  productId           String
+  product             Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  optionValues        String[]
+  sku                 String   @default("")
+  barcode             String   @default("")
+  price               Float
+  compareAtPrice      Float?
+  inventoryTracker    String   @default("")
+  inventoryQuantity   Int      @default(0)
+  inventoryPolicy     String   @default("deny")
+  fulfillmentService  String   @default("manual")
+  requiresShipping    Boolean  @default(true)
+  taxable             Boolean  @default(true)
+  grams               Float    @default(0)
+  weightUnit          String   @default("kg")
+  image               String   @default("")
+  taxCode             String   @default("")
+  costPerItem         Float?
+  unitPriceMeasure    Json     @default("{}")
+  packedLength        Float?
+  packedWidth         Float?
+  packedHeight        Float?
+  packedDimensionUnit String   @default("")
+  sort                Int      @default(0)
 
   @@index([productId])
 }
 
-model ProductImage {
-  id        String  @id @default(cuid())
-  productId String
-  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
-  src       String
-  position  Int     @default(1)
-  alt       String  @default("")
-
-  @@unique([productId, position])
-}
-
 model Review {
   id        String   @id
-  artworkId String
-  artwork   Product  @relation(fields: [artworkId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
   ownerId   String?
   author    String
   rating    Int
@@ -218,17 +190,9 @@ model Review {
   verified  Boolean  @default(false)
   createdAt DateTime @default(now())
 
-  votes ReviewVote[]
+  votes Json @default("[]")
 
-  @@index([artworkId, status])
-}
-
-model ReviewVote {
-  reviewId String
-  review   Review @relation(fields: [reviewId], references: [id], onDelete: Cascade)
-  ownerId  String
-
-  @@id([reviewId, ownerId])
+  @@index([productId, status])
 }
 
 model Collection {
@@ -257,13 +221,15 @@ model Banner {
   sort     Int     @default(0)
 }
 
-model Post {
+model Blog {
   slug      String   @id
   title     String
   lede      String   @default("")
   body      String   @default("")
   published Boolean  @default(true)
   createdAt DateTime @default(now())
+
+  @@map("Blogs")
 }
 
 model Policy {
@@ -311,7 +277,7 @@ model Coupon {
 model CartItem {
   id              String   @id
   ownerId         String
-  artworkId       String?
+  productId       String?
   variantId       String?
   title           String
   artistName      String
@@ -332,10 +298,10 @@ model CartItem {
 
 model WishlistItem {
   ownerId   String
-  artworkId String
+  productId String
   createdAt DateTime @default(now())
 
-  @@id([ownerId, artworkId])
+  @@id([ownerId, productId])
 }
 
 model Follow {
@@ -348,13 +314,13 @@ model Follow {
 
 model RecentView {
   ownerId   String
-  artworkId String
+  productId String
   at        DateTime @default(now())
 
-  @@id([ownerId, artworkId])
+  @@id([ownerId, productId])
 }
 
-model SearchLog {
+model SearchHistory {
   id        Int      @id @default(autoincrement())
   ownerId   String?
   query     String
@@ -364,7 +330,7 @@ model SearchLog {
   @@index([createdAt])
 }
 
-model SavedDesign {
+model Saved {
   id        String   @id
   ownerId   String
   title     String
@@ -406,7 +372,7 @@ model Order {
 
   items   OrderItem[]
   jobs    PrintJob[]
-  returns ReturnCase[]
+  returns Returns[]
 
   @@index([customerId])
   @@index([createdAt])
@@ -416,7 +382,7 @@ model OrderItem {
   id              String    @id
   orderId         String
   order           Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  artworkId       String?
+  productId       String?
   variantId       String?
   sku             String    @default("")
   title           String
@@ -463,7 +429,7 @@ model PrintJob {
   @@index([orderId])
 }
 
-model ReturnCase {
+model Returns {
   id        String   @id
   orderId   String
   order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
@@ -482,7 +448,7 @@ model ReturnCase {
 // Every file stored in the bucket is registered here; media fields elsewhere may only point at these.
 model Upload {
   key         String   @id
-  kind        String // artwork | creator-profile | cms | custom-print | review | return | commission
+  kind        String // product | creator-profile | cms | custom-print | review | return | commission
   ownerId     String // customer id, guest:<id>, creator:<id> or admin
   contentType String
   size        Int
@@ -570,7 +536,7 @@ model Ticket {
   createdAt DateTime @default(now())
 }
 
-model B2BLead {
+model BulkOrder {
   id        String   @id
   company   String
   contact   String
@@ -582,9 +548,11 @@ model B2BLead {
   status    String   @default("new")
   quote     Json?
   createdAt DateTime @default(now())
+
+  @@map("BulkOrders")
 }
 
-model AuditLog {
+model Activity {
   id     String   @id
   at     DateTime @default(now())
   actor  String

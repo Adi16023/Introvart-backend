@@ -9,7 +9,7 @@ const MB = 1024 * 1024;
 type Actor = "creator" | "admin" | "shopper";
 
 export const KINDS = {
-  artwork: { folder: "artworks", actor: "creator", visibility: "public", maxBytes: 25 * MB, allow: IMAGES },
+  product: { folder: "products", actor: "creator", visibility: "public", maxBytes: 25 * MB, allow: IMAGES },
   "creator-profile": { folder: "creators", actor: "creator", visibility: "public", maxBytes: 10 * MB, allow: IMAGES },
   cms: { folder: "cms", actor: "admin", visibility: "public", maxBytes: 10 * MB, allow: IMAGES },
   review: { folder: "reviews", actor: "shopper", visibility: "public", maxBytes: 8 * MB, allow: IMAGES },

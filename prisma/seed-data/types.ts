@@ -6,7 +6,7 @@ export type FulfilmentType =
   | "original"
   | "commission";
 
-export type ArtworkStatus =
+export type ProductStatus =
   | "draft"
   | "submitted"
   | "changes_required"
@@ -51,7 +51,7 @@ export type Artist = {
   commissionRate: number;
 };
 
-export type Artwork = {
+export type Product = {
   id: string;
   slug: string;
   title: string;
@@ -72,7 +72,7 @@ export type Artwork = {
   rating: number;
   reviewCount: number;
   stock: number | null;
-  status: ArtworkStatus;
+  status: ProductStatus;
   moderatorNote?: string;
   personalization?: { key: string; label: string; placeholder: string }[];
   tags: string[];
@@ -80,7 +80,7 @@ export type Artwork = {
 
 export type Review = {
   id: string;
-  artworkId: string;
+  productId: string;
   author: string;
   rating: number;
   text: string;
@@ -92,7 +92,7 @@ export type Review = {
 
 export type CartItem = {
   id: string;
-  artworkId?: string;
+  productId?: string;
   title: string;
   artistName: string;
   image: string;
@@ -232,7 +232,7 @@ export type ReturnCase = {
   evidence: string;
 };
 
-export type B2BLead = {
+export type BulkOrder = {
   id: string;
   company: string;
   contact: string;
@@ -250,7 +250,7 @@ export type AuditEntry = {
   action: string;
 };
 
-export type SavedDesign = {
+export type Saved = {
   id: string;
   title: string;
   image: string;
@@ -290,7 +290,7 @@ export type PricingConfig = {
 
 export type AppState = {
   artists: Artist[];
-  artworks: Artwork[];
+  products: Product[];
   reviews: Review[];
   customers: Customer[];
   cart: CartItem[];
@@ -304,9 +304,9 @@ export type AppState = {
   giftCards: GiftCard[];
   tickets: Ticket[];
   returns: ReturnCase[];
-  b2b: B2BLead[];
+  b2b: BulkOrder[];
   audit: AuditEntry[];
-  designs: SavedDesign[];
+  designs: Saved[];
   banners: Banner[];
   addresses: Address[];
   config: PricingConfig;

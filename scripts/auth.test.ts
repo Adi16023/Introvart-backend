@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { once } from "node:events";
 import { test } from "node:test";
 import jwt from "jsonwebtoken";
-import type { StaffSigningKey, StaffUser } from "@prisma/client";
+import type { StaffSigningKey, Admin } from "@prisma/client";
 import { buildApp } from "../src/app";
 import { prisma } from "../src/lib/db";
 import { hashPassword, issueStaffToken, verifyPassword } from "../src/services/staff-auth";
@@ -17,7 +17,7 @@ test("staff JWT authentication and authorization", async (t) => {
   }
   const password = "correct horse battery staple";
   const passwordHash = await hashPassword(password);
-  let user: StaffUser = {
+  let user: Admin = {
     id: "staff-test",
     email: "staff@example.test",
     name: "Test Staff",
@@ -30,7 +30,7 @@ test("staff JWT authentication and authorization", async (t) => {
     updatedAt: new Date(),
   };
   let key: StaffSigningKey | null = null;
-  const otherUsers = new Map<string, StaffUser>();
+  const otherUsers = new Map<string, Admin>();
   const findUser = (where: { email?: string; id?: string }) =>
     [user, ...otherUsers.values()].find((entry) => where.email === entry.email || where.id === entry.id) ?? null;
   stub(prisma.staffSigningKey, "findUnique", async () => key);
@@ -38,17 +38,17 @@ test("staff JWT authentication and authorization", async (t) => {
     key ??= { ...args.create, createdAt: new Date() };
     return key;
   });
-  stub(prisma.staffUser, "findUnique", async (args: { where: { email?: string; id?: string } }) => findUser(args.where));
-  stub(prisma.staffUser, "findUniqueOrThrow", async (args: { where: { id: string } }) => {
+  stub(prisma.admin, "findUnique", async (args: { where: { email?: string; id?: string } }) => findUser(args.where));
+  stub(prisma.admin, "findUniqueOrThrow", async (args: { where: { id: string } }) => {
     const found = findUser(args.where);
     assert.ok(found);
     return found;
   });
-  stub(prisma.staffUser, "findMany", async () => [user, ...otherUsers.values()]);
-  stub(prisma.staffUser, "create", async (args: {
-    data: Pick<StaffUser, "email" | "name" | "role" | "passwordHash"> & { creatorId?: string | null };
+  stub(prisma.admin, "findMany", async () => [user, ...otherUsers.values()]);
+  stub(prisma.admin, "create", async (args: {
+    data: Pick<Admin, "email" | "name" | "role" | "passwordHash"> & { creatorId?: string | null };
   }) => {
-    const created: StaffUser = {
+    const created: Admin = {
       ...user,
       ...args.data,
       id: `staff-created-${otherUsers.size}`,
@@ -59,9 +59,9 @@ test("staff JWT authentication and authorization", async (t) => {
     otherUsers.set(created.id, created);
     return created;
   });
-  stub(prisma.staffUser, "update", async (args: {
+  stub(prisma.admin, "update", async (args: {
     where: { id: string };
-    data: { tokenVersion: { increment: number }; passwordHash?: string; role?: StaffUser["role"]; disabled?: boolean };
+    data: { tokenVersion: { increment: number }; passwordHash?: string; role?: Admin["role"]; disabled?: boolean };
   }) => {
     const found = findUser(args.where);
     assert.ok(found);
@@ -73,7 +73,7 @@ test("staff JWT authentication and authorization", async (t) => {
   });
   stub(prisma.printJob, "findMany", async () => []);
   stub(prisma.artist, "findUnique", async () => ({ id: "artist-test", suspended: false }));
-  stub(prisma.auditLog, "create", async () => ({}));
+  stub(prisma.activity, "create", async () => ({}));
   const server = buildApp().listen(0, "127.0.0.1");
   await once(server, "listening");
   t.after(async () => {

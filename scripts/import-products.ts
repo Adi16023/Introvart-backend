@@ -24,9 +24,9 @@ async function main() {
     const products = await prisma.product.findMany({ include: { ...productInclude, reviews: { include: { votes: true } } } });
     const ids = products.map((product) => product.id);
     const [cart, wishlist, recent, collections] = await Promise.all([
-      prisma.cartItem.findMany({ where: { artworkId: { in: ids } } }),
-      prisma.wishlistItem.findMany({ where: { artworkId: { in: ids } } }),
-      prisma.recentView.findMany({ where: { artworkId: { in: ids } } }),
+      prisma.cartItem.findMany({ where: { productId: { in: ids } } }),
+      prisma.wishlistItem.findMany({ where: { productId: { in: ids } } }),
+      prisma.recentView.findMany({ where: { productId: { in: ids } } }),
       prisma.collection.findMany(),
     ]);
     await writeFile(values.backup, JSON.stringify({ at: new Date().toISOString(), products, cart, wishlist, recent, collections }, null, 2), { flag: "wx" });

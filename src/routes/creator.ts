@@ -109,9 +109,9 @@ creatorRouter.get("/dashboard", async (req, res) => {
   });
 });
 
-// ───────── artworks ─────────
+// ───────── products ─────────
 
-const artworkBody = z.object({
+const productBody = z.object({
   title: z.string().min(2).max(120),
   story: z.string().min(1).max(3000),
   category: z.string().min(1).max(60).default("Abstract"),
@@ -131,7 +131,7 @@ const artworkBody = z.object({
   submit: z.boolean().default(true),
 });
 
-async function createArtwork(artistId: string, body: z.infer<typeof artworkBody>) {
+async function createProduct(artistId: string, body: z.infer<typeof productBody>) {
   const artist = await prisma.artist.findUniqueOrThrow({ where: { id: artistId } });
   const base = slugify(body.title) || uid("work").toLowerCase();
   let slug = base;
@@ -167,73 +167,73 @@ async function createArtwork(artistId: string, body: z.infer<typeof artworkBody>
   });
 }
 
-creatorRouter.get("/artworks", async (req, res) => {
+creatorRouter.get("/products", async (req, res) => {
   res.json(await prisma.product.findMany({ where: { artistId: req.creatorId }, orderBy: { createdAt: "desc" } }));
 });
 
-creatorRouter.post("/artworks", async (req, res) => {
-  const body = parse(artworkBody, req.body);
-  const image = await resolveOne(req, body.image, ["artwork"]);
-  const roomImage = body.roomImage ? await resolveOne(req, body.roomImage, ["artwork"], "roomImage") : image;
-  res.status(201).json(await createArtwork(req.creatorId!, { ...body, image, roomImage }));
+creatorRouter.post("/products", async (req, res) => {
+  const body = parse(productBody, req.body);
+  const image = await resolveOne(req, body.image, ["product"]);
+  const roomImage = body.roomImage ? await resolveOne(req, body.roomImage, ["product"], "roomImage") : image;
+  res.status(201).json(await createProduct(req.creatorId!, { ...body, image, roomImage }));
 });
 
-async function ownArtwork(req: { creatorId?: string }, id: string) {
-  const artwork = await prisma.product.findFirst({ where: { id, artistId: req.creatorId } });
-  if (!artwork) throw notFound("Artwork not found");
-  return artwork;
+async function ownProduct(req: { creatorId?: string }, id: string) {
+  const product = await prisma.product.findFirst({ where: { id, artistId: req.creatorId } });
+  if (!product) throw notFound("Product not found");
+  return product;
 }
 
 const CONTENT_FIELDS = ["title", "story", "image", "roomImage", "category", "style", "colours", "rooms", "occasions", "personalization"] as const;
 
-creatorRouter.patch("/artworks/:id", async (req, res) => {
-  const artwork = await ownArtwork(req, param(req, "id"));
-  if (artwork.status === "suspended" || artwork.status === "rejected") throw forbidden(`A ${artwork.status} work cannot be edited`);
-  const body = parse(artworkBody.omit({ fulfilment: true, rightsDeclared: true, submit: true, stock: true }).partial(), req.body);
+creatorRouter.patch("/products/:id", async (req, res) => {
+  const product = await ownProduct(req, param(req, "id"));
+  if (product.status === "suspended" || product.status === "rejected") throw forbidden(`A ${product.status} work cannot be edited`);
+  const body = parse(productBody.omit({ fulfilment: true, rightsDeclared: true, submit: true, stock: true }).partial(), req.body);
   const { personalization, ...rest } = body;
-  if (rest.image) rest.image = await resolveOne(req, rest.image, ["artwork"]);
-  if (rest.roomImage) rest.roomImage = await resolveOne(req, rest.roomImage, ["artwork"], "roomImage");
+  if (rest.image) rest.image = await resolveOne(req, rest.image, ["product"]);
+  if (rest.roomImage) rest.roomImage = await resolveOne(req, rest.roomImage, ["product"], "roomImage");
   const touchesContent = CONTENT_FIELDS.some((field) => (body as Record<string, unknown>)[field] !== undefined);
   const updated = await prisma.product.update({
-    where: { id: artwork.id },
+    where: { id: product.id },
     data: {
       ...rest,
       ...(personalization ? { personalization: json(personalization) } : {}),
       // Edits to a live listing go back through moderation.
-      ...(artwork.status === "approved" && touchesContent ? { status: "submitted", moderatorNote: null } : {}),
+      ...(product.status === "approved" && touchesContent ? { status: "submitted", moderatorNote: null } : {}),
     },
   });
   res.json(updated);
 });
 
-creatorRouter.post("/artworks/:id/rights", async (req, res) => {
-  const artwork = await ownArtwork(req, param(req, "id"));
-  if (artwork.tags.includes("rights-declared")) {
-    res.json(artwork);
+creatorRouter.post("/products/:id/rights", async (req, res) => {
+  const product = await ownProduct(req, param(req, "id"));
+  if (product.tags.includes("rights-declared")) {
+    res.json(product);
     return;
   }
-  res.json(await prisma.product.update({ where: { id: artwork.id }, data: { tags: [...artwork.tags, "rights-declared"] } }));
+  res.json(await prisma.product.update({ where: { id: product.id }, data: { tags: [...product.tags, "rights-declared"] } }));
 });
 
-creatorRouter.post("/artworks/:id/submit", async (req, res) => {
-  const artwork = await ownArtwork(req, param(req, "id"));
-  if (!["draft", "changes_required"].includes(artwork.status)) throw conflict(`A ${artwork.status.replaceAll("_", " ")} work cannot be submitted`);
-  if (!artwork.tags.includes("rights-declared")) throw badRequest("Declare that you hold the rights first");
-  res.json(await prisma.product.update({ where: { id: artwork.id }, data: { status: "submitted", moderatorNote: null } }));
+creatorRouter.post("/products/:id/submit", async (req, res) => {
+  const product = await ownProduct(req, param(req, "id"));
+  if (!["draft", "changes_required"].includes(product.status)) throw conflict(`A ${product.status.replaceAll("_", " ")} work cannot be submitted`);
+  if (!product.tags.includes("rights-declared")) throw badRequest("Declare that you hold the rights first");
+  res.json(await prisma.product.update({ where: { id: product.id }, data: { status: "submitted", moderatorNote: null } }));
 });
 
-creatorRouter.patch("/artworks/:id/stock", async (req, res) => {
+creatorRouter.patch("/products/:id/stock", async (req, res) => {
   const { stock } = parse(z.object({ stock: z.coerce.number().int().min(0).max(100000) }), req.body);
-  const artwork = await ownArtwork(req, param(req, "id"));
-  if (artwork.stock === null) throw badRequest("Prints are made to order and carry no count");
-  res.json(await prisma.product.update({ where: { id: artwork.id }, data: { stock } }));
+  const product = await ownProduct(req, param(req, "id"));
+  if (product.stock === null) throw badRequest("Prints are made to order and carry no count");
+  res.json(await prisma.product.update({ where: { id: product.id }, data: { stock } }));
 });
 
-creatorRouter.delete("/artworks/:id", async (req, res) => {
-  const artwork = await ownArtwork(req, param(req, "id"));
-  if (!["draft", "rejected"].includes(artwork.status)) throw conflict("Only drafts and rejected works can be deleted");
-  if (await prisma.orderItem.count({ where: { artworkId: artwork.id } })) throw conflict("This work has orders against it");
-  await prisma.product.delete({ where: { id: artwork.id } });
+creatorRouter.delete("/products/:id", async (req, res) => {
+  const product = await ownProduct(req, param(req, "id"));
+  if (!["draft", "rejected"].includes(product.status)) throw conflict("Only drafts and rejected works can be deleted");
+  if (await prisma.orderItem.count({ where: { productId: product.id } })) throw conflict("This work has orders against it");
+  await prisma.product.delete({ where: { id: product.id } });
   res.status(204).end();
 });
 
@@ -243,15 +243,15 @@ creatorRouter.get("/templates", async (req, res) => {
 
 creatorRouter.post("/templates", async (req, res) => {
   const body = parse(
-    artworkBody.partial({ story: true, basePrice: true, category: true }).extend({
-      personalization: artworkBody.shape.personalization.unwrap().min(1),
+    productBody.partial({ story: true, basePrice: true, category: true }).extend({
+      personalization: productBody.shape.personalization.unwrap().min(1),
     }),
     req.body,
   );
-  const image = await resolveOne(req, body.image, ["artwork"]);
-  const roomImage = body.roomImage ? await resolveOne(req, body.roomImage, ["artwork"], "roomImage") : image;
+  const image = await resolveOne(req, body.image, ["product"]);
+  const roomImage = body.roomImage ? await resolveOne(req, body.roomImage, ["product"], "roomImage") : image;
   res.status(201).json(
-    await createArtwork(req.creatorId!, {
+    await createProduct(req.creatorId!, {
       ...body,
       fulfilment: "personalized",
       story: body.story ?? "Editable names on a fixed drawing.",
@@ -261,7 +261,7 @@ creatorRouter.post("/templates", async (req, res) => {
       category: body.category ?? "Personalised",
       tags: [...(body.tags ?? []), "template"],
       submit: body.submit ?? false,
-    } as z.infer<typeof artworkBody>),
+    } as z.infer<typeof productBody>),
   );
 });
 
@@ -314,11 +314,11 @@ creatorRouter.get("/inventory", async (req, res) => {
 creatorRouter.get("/analytics", async (req, res) => {
   const works = await prisma.product.findMany({ where: { artistId: req.creatorId } });
   const sold = await prisma.orderItem.groupBy({
-    by: ["artworkId"],
+    by: ["productId"],
     where: { creatorId: req.creatorId, status: { notIn: ["cancelled", "pending_payment"] } },
     _sum: { quantity: true },
   });
-  const sales = new Map(sold.map((row) => [row.artworkId, row._sum.quantity ?? 0]));
+  const sales = new Map(sold.map((row) => [row.productId, row._sum.quantity ?? 0]));
   const rows = works.map((work) => ({
     id: work.id,
     title: work.title,
@@ -399,7 +399,7 @@ creatorRouter.delete("/coupons/:code", async (req, res) => {
 });
 
 creatorRouter.get("/reviews", async (req, res) => {
-  const rows = await prisma.review.findMany({ where: { artwork: { artistId: req.creatorId } }, include: { artwork: { select: { title: true, slug: true } } }, orderBy: { createdAt: "desc" } });
+  const rows = await prisma.review.findMany({ where: { product: { artistId: req.creatorId } }, include: { product: { select: { title: true, slug: true } } }, orderBy: { createdAt: "desc" } });
   res.json(rows.map(({ ownerId: _o, ...row }) => row));
 });
 

@@ -20,7 +20,7 @@ test("product API, CSV import and variant checkout against configured database",
   const ownerId = `guest:product-test-${suffix}`;
   const guest = { "x-guest-id": `product-test-${suffix}` };
   const existing = await prisma.product.findFirstOrThrow({ where: { status: "approved" }, include: { artist: true } });
-  const user = await prisma.staffUser.findFirstOrThrow({ where: { role: "super", disabled: false } });
+  const user = await prisma.admin.findFirstOrThrow({ where: { role: "super", disabled: false } });
   const token = (await issueStaffToken(user)).accessToken;
   const headers = { Authorization: `Bearer ${token}` };
   const server = buildApp().listen(0, "127.0.0.1");
@@ -58,13 +58,13 @@ test("product API, CSV import and variant checkout against configured database",
     created = await response.json();
     assert.equal(created.variants.length, 2);
     assert.equal(created.variants[0].price, 109.5);
-    assert.equal((await prisma.productImage.count({ where: { productId: created.id } })), 1);
+    assert.deepEqual(created.images, [{ src: existing.image, position: 1, alt: "Test" }]);
     assert.equal((await send("/admin/products", {
       handle, title: "Duplicate", images: [], variants: [{ price: 1 }],
     })).status, 409);
   });
-  await t.test("public product aliases expose exact variant pricing and preserve artwork links", async () => {
-    for (const prefix of ["products", "artworks"]) {
+  await t.test("public product aliases expose exact variant pricing and preserve product links", async () => {
+    for (const prefix of ["products", "products"]) {
       const response = await call(`/${prefix}/${handle}`);
       assert.equal(response.status, 200);
       const product = await response.json();
@@ -73,15 +73,15 @@ test("product API, CSV import and variant checkout against configured database",
       assert.equal(product.productOptions[0].name, "Size");
       assert.equal("sourceRows" in product, false);
     }
-    const quote = await send("/pricing/quote", { artworkId: created.id, variantId: created.variants[0].id, quantity: 2 }, guest);
+    const quote = await send("/pricing/quote", { productId: created.id, variantId: created.variants[0].id, quantity: 2 }, guest);
     assert.equal(quote.status, 200);
     assert.equal((await quote.json()).total, 219);
-    assert.equal((await send("/pricing/quote", { artworkId: created.id }, guest)).status, 400);
+    assert.equal((await send("/pricing/quote", { productId: created.id }, guest)).status, 400);
   });
   await t.test("cart and checkout reserve the selected SKU and release inventory on cancellation", async () => {
-    const body = { artworkId: created.id, variantId: created.variants[0].id, quantity: 2 };
+    const body = { productId: created.id, variantId: created.variants[0].id, quantity: 2 };
     assert.equal((await send("/cart/items", { ...body, variantId: "forged" }, guest)).status, 400);
-    assert.equal((await send("/cart/items", { artworkId: created.id }, guest)).status, 400);
+    assert.equal((await send("/cart/items", { productId: created.id }, guest)).status, 400);
     const added = await send("/cart/items", body, guest);
     assert.equal(added.status, 201, await added.clone().text());
     assert.equal((await send("/cart/items", { ...body, quantity: 1 }, guest)).status, 409);
@@ -125,6 +125,7 @@ test("product API, CSV import and variant checkout against configured database",
     const bulk = await prisma.product.findUniqueOrThrow({ where: { slug: bulkHandle }, include: productInclude });
     assert.equal(bulk.variants[0].price, 199);
     assert.equal(bulk.status, "draft");
+    assert.deepEqual(bulk.images, [{ src: existing.image, position: 1, alt: "" }]);
     assert.equal((await upload(false)).status, 400);
     assert.equal(await prisma.product.count({ where: { slug: bulkHandle } }), 1);
   });
@@ -151,6 +152,6 @@ test("stored replacement matches every supplied CSV product, variant and origina
       const { id: _id, productId: _productId, sort: _sort, ...fields } = variant;
       assert.deepEqual(fields, input.variants[index]);
     }
-    assert.deepEqual(product.images.map(({ id: _id, productId: _productId, ...image }) => image), [...input.images].sort((a, b) => a.position - b.position));
+    assert.deepEqual(product.images, [...input.images].sort((a, b) => a.position - b.position));
   }
 });

@@ -25,7 +25,7 @@ async function headersFor(who: Who) {
     if (!token) {
       const role = who.creator ? StaffRole.creator : Object.values(StaffRole).find((value) => value === who.admin);
       if (!role) throw new Error("Unknown smoke-test staff role");
-      const user = await prisma.staffUser.create({
+      const user = await prisma.admin.create({
         data: {
           email: `${fixtureRun}-${staffIds.length}@smoke.invalid`,
           name: "Smoke staff",
@@ -85,13 +85,13 @@ async function main() {
   check("config has sizes", cfg.data.sizes?.length >= 4, cfg.data);
   const home = await call("GET", "/home");
   check("home has banners and trending", home.data.banners?.length > 0 && home.data.trending?.length > 0, home.status);
-  const list = await call("GET", "/artworks?limit=100");
+  const list = await call("GET", "/products?limit=100");
   check("listing excludes drafts", list.data.items.every((a: any) => a.status === "approved"), list.status);
   const jasmine = await call("GET", "/search?q=jasmin&log=false");
   check("fuzzy search finds Jasmine Hour", jasmine.data.items?.some((a: any) => a.title === "Jasmine Hour"), jasmine.data.total);
-  const detail = await call("GET", "/artworks/monsoon-window");
-  check("artwork detail with options", detail.status === 200 && detail.data.options?.frames?.length > 0, detail.status);
-  const quote = await call("POST", "/pricing/quote", {}, { artworkId: "a1", sizeId: "a3", materialId: "canvas", frameId: "oak" });
+  const detail = await call("GET", "/products/monsoon-window");
+  check("product detail with options", detail.status === 200 && detail.data.options?.frames?.length > 0, detail.status);
+  const quote = await call("POST", "/pricing/quote", {}, { productId: "a1", sizeId: "a3", materialId: "canvas", frameId: "oak" });
   check("price quote is server computed", quote.data.unitPrice > 0, quote.data);
   const pin = await call("GET", "/pincode/990001");
   check("pincode 99… is outside the map", pin.data.serviceable === false, pin.data);
@@ -105,18 +105,18 @@ async function main() {
   check("session creates a customer", Boolean(me), session.data);
   const who: Who = { customer: me };
   expectStatus("cart needs identity", await call("GET", "/cart"), 400);
-  const add = await call("POST", "/cart/items", who, { artworkId: "a1", sizeId: "a3", materialId: "matte", frameId: "oak", quantity: 2 });
+  const add = await call("POST", "/cart/items", who, { productId: "a1", sizeId: "a3", materialId: "matte", frameId: "oak", quantity: 2 });
   check("add to cart", add.status === 201, add.data);
   const cart = await call("GET", "/cart", who);
   const unit = quote.data.unitPrice as number;
-  const q2 = await call("POST", "/pricing/quote", {}, { artworkId: "a1", sizeId: "a3", materialId: "matte", frameId: "oak" });
+  const q2 = await call("POST", "/pricing/quote", {}, { productId: "a1", sizeId: "a3", materialId: "matte", frameId: "oak" });
   const unitOak = q2.data.unitPrice as number;
   check("cart price comes from the server", cart.data.items?.[0]?.unitPrice === unitOak && cart.data.subtotal === unitOak * 2, { unitOak, cart: cart.data.subtotal });
   console.log("Uploads and the bucket");
   expectStatus("uploads need an identity", await upload("custom-print", {}, PNG), 400);
   expectStatus("unknown upload kind", await upload("avatar", who, PNG), 400);
   expectStatus("a text file renamed .png is refused", await upload("custom-print", who, Buffer.from("not an image at all"), "evil.png"), 415);
-  expectStatus("a shopper cannot upload artwork masters", await upload("artwork", who, PNG), 401);
+  expectStatus("a shopper cannot upload product masters", await upload("product", who, PNG), 401);
   const svg = await upload("custom-print", who, Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'), "x.svg", "image/svg+xml");
   expectStatus("SVG is refused", svg, 415);
   const up = await upload("custom-print", who, PNG);
@@ -137,9 +137,9 @@ async function main() {
   const design = await call("POST", "/me/designs", who, { title: "Terrace", image: up.data.url, kind: "Custom print", detail: "A3" });
   check("saved design uses the uploaded file", design.status === 201 && design.data.image === up.data.url, design.data);
   const reviewPhoto = await upload("review", who, PNG);
-  const photoReview = await call("POST", "/reviews", who, { artworkId: "a5", rating: 4, text: "Colours are true", photo: reviewPhoto.data.url });
+  const photoReview = await call("POST", "/reviews", who, { productId: "a5", rating: 4, text: "Colours are true", photo: reviewPhoto.data.url });
   check("review photo goes through the bucket", photoReview.status === 201 && photoReview.data.photo === reviewPhoto.data.url, photoReview.data);
-  expectStatus("review photo cannot be an outside link", await call("POST", "/reviews", who, { artworkId: "a6", rating: 4, text: "Nice", photo: "https://example.com/p.jpg" }), 400);
+  expectStatus("review photo cannot be an outside link", await call("POST", "/reviews", who, { productId: "a6", rating: 4, text: "Nice", photo: "https://example.com/p.jpg" }), 400);
   const retPhoto = await upload("return", who, PNG);
   const refPhoto = await upload("commission", who, PNG);
   check("return and commission uploads accepted", retPhoto.status === 201 && refPhoto.status === 201, { retPhoto: retPhoto.data, refPhoto: refPhoto.data });
@@ -198,8 +198,8 @@ async function main() {
   check("gift card issued", gift.status === 201 && gift.data.balance === 2500, gift.data);
   const bal = await call("GET", `/gift-cards/balance?code=${gift.data.code}`);
   check("balance lookup", bal.data.balance === 2500, bal.data);
-  const q3 = await call("POST", "/pricing/quote", {}, { artworkId: "a2", sizeId: "a4", materialId: "matte", frameId: "none" });
-  await call("POST", "/cart/items", who, { artworkId: "a2", sizeId: "a4", materialId: "matte", frameId: "none" });
+  const q3 = await call("POST", "/pricing/quote", {}, { productId: "a2", sizeId: "a4", materialId: "matte", frameId: "none" });
+  await call("POST", "/cart/items", who, { productId: "a2", sizeId: "a4", materialId: "matte", frameId: "none" });
   const giftOrder = await call("POST", "/orders", who, { address: addr, paymentMethod: "upi", delivery: "standard", giftCardCode: gift.data.code });
   check("gift card covers a small order fully and settles at once", giftOrder.status === 201 && giftOrder.data.payable === 0 && giftOrder.data.paymentStatus === "paid" && giftOrder.data.jobs.length === 1, giftOrder.data);
   const bal2 = await call("GET", `/gift-cards/balance?code=${gift.data.code}`);
@@ -212,16 +212,16 @@ async function main() {
   const original = list.data.items.find((a: any) => a.fulfilment === "original" && a.stock === 1);
   if (original) {
     const guest: Who = { guest: "smoke-guest" };
-    await call("POST", "/cart/items", guest, { artworkId: original.id });
+    await call("POST", "/cart/items", guest, { productId: original.id });
     const guestOrder = await call("POST", "/orders", guest, { address: addr, paymentMethod: "upi", delivery: "standard", email: "guest@example.com" });
     check("guest checkout reserves the only original", guestOrder.status === 201, guestOrder.data);
-    const gone = await call("GET", `/artworks/${original.slug}`);
+    const gone = await call("GET", `/products/${original.slug}`);
     check("sold-out original shows stock 0", gone.data.stock === 0, gone.data.stock);
-    const second = await call("POST", "/cart/items", who, { artworkId: original.id });
+    const second = await call("POST", "/cart/items", who, { productId: original.id });
     check("cannot add a sold-out original", second.status === 409, second.data);
     const failed = await call("POST", `/orders/${guestOrder.data.id}/payment`, guest, { result: "failed" });
     check("failed payment releases stock", failed.data.paymentStatus === "failed");
-    const back = await call("GET", `/artworks/${original.slug}`);
+    const back = await call("GET", `/products/${original.slug}`);
     check("stock back to 1", back.data.stock === 1, back.data.stock);
     await call("POST", `/me/orders/${guestOrder.data.id}/cancel`, guest);
   }
@@ -249,31 +249,31 @@ async function main() {
   check("creator registers", reg.status === 201, reg.data);
   const cid = reg.data.id as string;
   const studio: Who = { creator: cid };
-  const master = await upload("artwork", studio, PNG, "master.png");
-  check("creator master file stored in the bucket", master.status === 201 && master.data.url.includes("/api/v1/media/artworks/") && master.data.visibility === "public", master.data);
+  const master = await upload("product", studio, PNG, "master.png");
+  check("creator master file stored in the bucket", master.status === 201 && master.data.url.includes("/api/v1/media/products/") && master.data.visibility === "public", master.data);
   const anonMaster = await fetch(master.data.url);
-  check("public artwork media readable without identity", anonMaster.status === 200);
-  expectStatus("artwork with an outside image link refused", await call("POST", "/creator/artworks", studio, { title: "Linked", story: "x", basePrice: 2500, image: "https://example.com/a.jpg" }), 400);
-  expectStatus("another creator cannot use this master", await call("POST", "/creator/artworks", { creator: "meera" }, { title: "Stolen", story: "x", basePrice: 2500, image: master.data.url }), 400);
-  const noRights = await call("POST", "/creator/artworks", studio, { title: "Smoke Print", story: "Test", basePrice: 2500, image: master.data.url });
-  check("artwork keeps the bucket URL", noRights.data.image === master.data.url && noRights.data.roomImage === master.data.url, noRights.data);
+  check("public product media readable without identity", anonMaster.status === 200);
+  expectStatus("product with an outside image link refused", await call("POST", "/creator/products", studio, { title: "Linked", story: "x", basePrice: 2500, image: "https://example.com/a.jpg" }), 400);
+  expectStatus("another creator cannot use this master", await call("POST", "/creator/products", { creator: "meera" }, { title: "Stolen", story: "x", basePrice: 2500, image: master.data.url }), 400);
+  const noRights = await call("POST", "/creator/products", studio, { title: "Smoke Print", story: "Test", basePrice: 2500, image: master.data.url });
+  check("product keeps the bucket URL", noRights.data.image === master.data.url && noRights.data.roomImage === master.data.url, noRights.data);
   check("without rights the work stays a draft", noRights.data.status === "draft", noRights.data);
-  expectStatus("submitting without rights blocked", await call("POST", `/creator/artworks/${noRights.data.id}/submit`, studio), 400);
-  await call("POST", `/creator/artworks/${noRights.data.id}/rights`, studio);
-  const submitted = await call("POST", `/creator/artworks/${noRights.data.id}/submit`, studio);
+  expectStatus("submitting without rights blocked", await call("POST", `/creator/products/${noRights.data.id}/submit`, studio), 400);
+  await call("POST", `/creator/products/${noRights.data.id}/rights`, studio);
+  const submitted = await call("POST", `/creator/products/${noRights.data.id}/submit`, studio);
   check("submit after rights → submitted", submitted.data.status === "submitted", submitted.data);
   const modsees = await call("GET", "/admin/moderation", { admin: "moderator" });
   check("moderator sees the queue", modsees.data.some((a: any) => a.id === noRights.data.id));
-  expectStatus("rejection needs a note", await call("POST", `/admin/artworks/${noRights.data.id}/decision`, { admin: "moderator" }, { decision: "reject" }), 400);
-  const live = await call("POST", `/admin/artworks/${noRights.data.id}/decision`, { admin: "moderator" }, { decision: "approve" });
+  expectStatus("rejection needs a note", await call("POST", `/admin/products/${noRights.data.id}/decision`, { admin: "moderator" }, { decision: "reject" }), 400);
+  const live = await call("POST", `/admin/products/${noRights.data.id}/decision`, { admin: "moderator" }, { decision: "approve" });
   check("approved work goes live", live.data.status === "approved");
-  const found = await call("GET", `/artworks/${live.data.slug}`);
+  const found = await call("GET", `/products/${live.data.slug}`);
   check("approved work is public", found.status === 200);
-  const rev1 = await call("POST", "/reviews", who, { artworkId: "a4", rating: 5, text: "Looks great on the wall" });
+  const rev1 = await call("POST", "/reviews", who, { productId: "a4", rating: 5, text: "Looks great on the wall" });
   check("review lands pending", rev1.data.status === "pending", rev1.data);
-  const before = (await call("GET", "/artworks/estuary")).data;
+  const before = (await call("GET", "/products/estuary")).data;
   await call("POST", `/admin/reviews/${rev1.data.id}/moderate`, { admin: "moderator" }, { status: "approved" });
-  const after = (await call("GET", "/artworks/estuary")).data;
+  const after = (await call("GET", "/products/estuary")).data;
   check("approving a review updates the aggregate", after.reviewCount === before.reviewCount + 1, { before: before.reviewCount, after: after.reviewCount });
   const kyc = await call("PUT", "/creator/kyc", studio, { pan: "ABCDE1234F", bank: "HDFC ••1111", ifsc: "HDFC0001234" });
   check("KYC submitted", kyc.data.kyc === "pending", kyc.data);
@@ -337,7 +337,7 @@ main().catch((error) => {
   process.exitCode = 1;
 }).finally(async () => {
   try {
-    if (staffIds.length) await prisma.staffUser.deleteMany({ where: { id: { in: staffIds } } });
+    if (staffIds.length) await prisma.admin.deleteMany({ where: { id: { in: staffIds } } });
   } finally {
     await prisma.$disconnect();
   }

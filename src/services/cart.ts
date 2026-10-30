@@ -6,7 +6,7 @@ import { variantAvailable, variantLabel } from "./product-variants";
 export type PricedLine = CartItem & {
   unitPrice: number;
   lineTotal: number;
-  artwork: Pick<Product, "id" | "slug" | "stock" | "status" | "artistId" | "fulfilment" | "personalization"> | null;
+  product: Pick<Product, "id" | "slug" | "stock" | "status" | "artistId" | "fulfilment" | "personalization"> | null;
   problem: string | null;
   variant: ProductVariant | null;
   variantTitle: string | null;
@@ -14,35 +14,35 @@ export type PricedLine = CartItem & {
 
 export async function loadPricedCart(db: Db, ownerId: string, config: PricingConfig) {
   const items = await db.cartItem.findMany({ where: { ownerId }, orderBy: { createdAt: "asc" } });
-  const ids = items.map((item) => item.artworkId).filter((id): id is string => Boolean(id));
-  const artworks = ids.length
+  const ids = items.map((item) => item.productId).filter((id): id is string => Boolean(id));
+  const products = ids.length
     ? await db.product.findMany({
         where: { id: { in: ids } },
         select: { id: true, slug: true, stock: true, status: true, artistId: true, fulfilment: true, basePrice: true, priceFactor: true, personalization: true, variants: true },
       })
     : [];
-  const byId = new Map(artworks.map((artwork) => [artwork.id, artwork]));
+  const byId = new Map(products.map((product) => [product.id, product]));
 
   const lines: PricedLine[] = items.map((item) => {
-    const artwork = item.artworkId ? byId.get(item.artworkId) ?? null : null;
-    const variant = artwork?.variants.find((entry) => entry.id === item.variantId) ?? null;
+    const product = item.productId ? byId.get(item.productId) ?? null : null;
+    const variant = product?.variants.find((entry) => entry.id === item.variantId) ?? null;
     // Prices always come from the catalogue, never from the client.
-    const fulfilment = artwork ? artwork.fulfilment : item.fulfilment;
+    const fulfilment = product ? product.fulfilment : item.fulfilment;
     const price = variant?.price ?? unitPrice(config, {
       fulfilment,
-      basePrice: artwork?.basePrice ?? 0,
-      priceFactor: artwork?.priceFactor ?? 1,
+      basePrice: product?.basePrice ?? 0,
+      priceFactor: product?.priceFactor ?? 1,
       sizeId: item.sizeId,
       materialId: item.materialId,
       frameId: item.frameId,
     });
     let problem: string | null = null;
-    if (item.artworkId && (!artwork || artwork.status !== "approved")) problem = `${item.title} is no longer available`;
-    else if (artwork?.variants.length && !variant) problem = `Choose a valid variant for ${item.title}`;
+    if (item.productId && (!product || product.status !== "approved")) problem = `${item.title} is no longer available`;
+    else if (product?.variants.length && !variant) problem = `Choose a valid variant for ${item.title}`;
     else if (item.variantId && !variant) problem = `The selected variant of ${item.title} is no longer available`;
     else if (variant && !variantAvailable(variant, item.quantity)) problem = `The selected variant of ${item.title} has insufficient stock`;
-    else if (artwork && artwork.stock !== null && artwork.stock < item.quantity) {
-      problem = artwork.stock === 0 ? `${item.title} is sold out` : `Only ${artwork.stock} of ${item.title} left`;
+    else if (product && product.stock !== null && product.stock < item.quantity) {
+      problem = product.stock === 0 ? `${item.title} is sold out` : `Only ${product.stock} of ${item.title} left`;
     }
     return {
       ...item,
@@ -51,8 +51,8 @@ export async function loadPricedCart(db: Db, ownerId: string, config: PricingCon
       lineTotal: Math.round(price * item.quantity * 100) / 100,
       variant,
       variantTitle: variant ? variantLabel(variant) : null,
-      artwork: artwork
-        ? { id: artwork.id, slug: artwork.slug, stock: artwork.stock, status: artwork.status, artistId: artwork.artistId, fulfilment: artwork.fulfilment, personalization: artwork.personalization }
+      product: product
+        ? { id: product.id, slug: product.slug, stock: product.stock, status: product.status, artistId: product.artistId, fulfilment: product.fulfilment, personalization: product.personalization }
         : null,
       problem,
     };

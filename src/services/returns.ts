@@ -19,12 +19,12 @@ export async function openReturn(input: {
     const item = order.items.find((entry) => (input.itemId ? entry.id === input.itemId : entry.title === input.itemTitle));
     if (!item) throw notFound("That line is not on this order");
     if (["pending_payment", "cancelled", "refunded"].includes(item.status)) throw conflict("This line cannot be returned");
-    const existing = await tx.returnCase.findFirst({
+    const existing = await tx.returns.findFirst({
       where: { orderId: order.id, itemId: item.id, status: { notIn: ["rejected", "closed", "refunded"] } },
     });
     if (existing) throw conflict(`Return ${existing.id} is already open for this line`);
 
-    const created = await tx.returnCase.create({
+    const created = await tx.returns.create({
       data: {
         id: uid("RET"),
         orderId: order.id,
@@ -46,13 +46,13 @@ export const RETURN_DECISIONS = ["refunded", "replacement", "reprint", "rejected
 
 export async function decideReturn(returnId: string, decision: (typeof RETURN_DECISIONS)[number]) {
   return transaction(async (tx) => {
-    const found = await tx.returnCase.findUnique({ where: { id: returnId }, include: { order: { include: { items: true } } } });
+    const found = await tx.returns.findUnique({ where: { id: returnId }, include: { order: { include: { items: true } } } });
     if (!found) throw notFound("Return not found");
     if (["refunded", "rejected", "closed"].includes(found.status)) throw conflict(`Return is already ${found.status}`);
     const item = found.order.items.find((entry) => entry.id === found.itemId || (!found.itemId && entry.title === found.itemTitle));
 
     if (decision === "evidence_review") {
-      return tx.returnCase.update({ where: { id: returnId }, data: { status: decision } });
+      return tx.returns.update({ where: { id: returnId }, data: { status: decision } });
     }
 
     if (decision === "refunded") {
@@ -91,6 +91,6 @@ export async function decideReturn(returnId: string, decision: (typeof RETURN_DE
       // rejected or closed without remedy: the line goes back to delivered
       await tx.orderItem.update({ where: { id: item.id }, data: { status: "delivered" } });
     }
-    return tx.returnCase.update({ where: { id: returnId }, data: { status: decision } });
+    return tx.returns.update({ where: { id: returnId }, data: { status: decision } });
   });
 }

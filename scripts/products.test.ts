@@ -102,7 +102,7 @@ test("cart uses authoritative variant prices, rejects stale variants and preserv
   };
   const base = { id: "p1", slug: "print", stock: null, status: "approved", artistId: "vendor", fulfilment: "platform_pod", basePrice: 0, priceFactor: 1, personalization: null, variants: [variant] };
   stub(prisma.product, "findMany", async () => [base]);
-  const cartItem = { id: "cart-test", ownerId: "test", artworkId: "p1", variantId: "v1", title: "Print", artistName: "Studio", image: "",
+  const cartItem = { id: "cart-test", ownerId: "test", productId: "p1", variantId: "v1", title: "Print", artistName: "Studio", image: "",
     fulfilment: "platform_pod", sizeId: "a3", materialId: "matte", frameId: "none", quantity: 2,
     personalization: null, note: null, gift: false, giftMessage: "", createdAt: new Date() };
   stub(prisma.cartItem, "findMany", async () => [cartItem]);

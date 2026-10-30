@@ -6,6 +6,11 @@ import { audit } from "./audit";
 
 const money = z.number().finite().min(0).max(10_000_000).refine((value) => Math.abs(value * 100 - Math.round(value * 100)) < 0.00001, "Use at most two decimal places");
 const imageUrl = z.string().url().max(2048).refine((value) => value.startsWith("https://"), "Use an HTTPS image URL");
+export const productImageSchema = z.object({
+  src: imageUrl,
+  position: z.number().int().positive(),
+  alt: z.string().max(1000).default(""),
+});
 export const optionSchema = z.object({
   name: z.string().trim().min(1).max(100),
   linkedTo: z.string().max(500).default(""),
@@ -49,7 +54,7 @@ export const productSchema = z.object({
   seoDescription: z.string().max(2000).default(""),
   fulfilment: z.enum(["platform_pod", "seller_fulfilled", "original", "personalized"]).default("platform_pod"),
   options: z.array(optionSchema).max(3).default([]),
-  images: z.array(z.object({ src: imageUrl, position: z.number().int().positive(), alt: z.string().max(1000).default("") })).max(100),
+  images: z.array(productImageSchema).max(100),
   variants: z.array(variantSchema).min(1).max(200),
   metafields: z.record(z.string(), z.string()).default({}),
   googleShopping: z.record(z.string(), z.string()).default({}),
@@ -81,7 +86,7 @@ export const productSchema = z.object({
 });
 
 export type ProductInput = z.infer<typeof productSchema>;
-export const productInclude = { variants: { orderBy: { sort: "asc" as const } }, images: { orderBy: { position: "asc" as const } } };
+export const productInclude = { variants: { orderBy: { sort: "asc" as const } } };
 
 export function plainDescription(html: string) {
   return html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "").replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, "")
@@ -127,6 +132,7 @@ function productData(input: ProductInput, artistId: string): Prisma.ProductCreat
     colours: (input.metafields["Color (product.metafields.shopify.color-pattern)"] || "").split(";").map((value) => value.trim()).filter(Boolean),
     rooms: [], occasions: [], orientation: ["portrait", "landscape", "square"].includes(orientation) ? orientation : "portrait",
     options: json(input.options), metafields: json(input.metafields), googleShopping: json(input.googleShopping), sourceRows: json(input.sourceRows),
+    images: json([...input.images].sort((a, b) => a.position - b.position)),
   };
 }
 
@@ -136,7 +142,6 @@ async function insertProduct(tx: Tx, input: ProductInput) {
     data: {
       ...productData(input, artistId),
       variants: { create: input.variants.map((variant, sort) => ({ ...variant, unitPriceMeasure: json(variant.unitPriceMeasure), sort })) },
-      images: { create: input.images },
     },
     include: productInclude,
   });
@@ -161,9 +166,9 @@ export async function importProducts(products: ProductInput[], actor: string, re
     let removed = 0;
     if (replace) {
       const ids = existing.map((product) => product.id);
-      await tx.cartItem.deleteMany({ where: { artworkId: { in: ids } } });
-      await tx.wishlistItem.deleteMany({ where: { artworkId: { in: ids } } });
-      await tx.recentView.deleteMany({ where: { artworkId: { in: ids } } });
+      await tx.cartItem.deleteMany({ where: { productId: { in: ids } } });
+      await tx.wishlistItem.deleteMany({ where: { productId: { in: ids } } });
+      await tx.recentView.deleteMany({ where: { productId: { in: ids } } });
       const collections = await tx.collection.findMany();
       const removedIds = new Set(ids);
       for (const collection of collections) {
@@ -173,7 +178,6 @@ export async function importProducts(products: ProductInput[], actor: string, re
     }
     const productRows: Prisma.ProductCreateManyInput[] = [];
     const variantRows: Prisma.ProductVariantCreateManyInput[] = [];
-    const imageRows: Prisma.ProductImageCreateManyInput[] = [];
     const vendors = new Map<string, string>();
     for (const product of products) {
       const artistId = await productArtist(tx, product, vendors);
@@ -182,11 +186,9 @@ export async function importProducts(products: ProductInput[], actor: string, re
       variantRows.push(...product.variants.map((variant, sort) => ({
         ...variant, productId: row.id, unitPriceMeasure: json(variant.unitPriceMeasure), sort,
       })));
-      imageRows.push(...product.images.map((image) => ({ ...image, productId: row.id })));
     }
     await tx.product.createMany({ data: productRows });
     await tx.productVariant.createMany({ data: variantRows });
-    if (imageRows.length) await tx.productImage.createMany({ data: imageRows });
     const variants = variantRows.length;
     await audit(tx, actor, `Imported ${products.length} products / ${variants} variants; removed ${removed} old products`);
     return { created: products.length, variants, removed };

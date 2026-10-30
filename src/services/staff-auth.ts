@@ -1,7 +1,7 @@
 import { generateKeyPair, randomBytes, scrypt, timingSafeEqual } from "node:crypto";
 import { promisify } from "node:util";
 import jwt from "jsonwebtoken";
-import { Prisma, type StaffUser } from "@prisma/client";
+import { Prisma, type Admin } from "@prisma/client";
 import { prisma } from "../lib/db";
 import { unauthorized } from "../lib/http";
 
@@ -10,8 +10,9 @@ const deriveKey = promisify(scrypt);
 const ISSUER = "introvart";
 const AUDIENCE = "introvart-staff";
 export const TOKEN_LIFETIME_SECONDS = 3600;
+type SigningKeys = { privateKey: string; publicKey: string };
 
-export const staffProfile = (user: StaffUser) => ({
+export const staffProfile = (user: Admin) => ({
   id: user.id,
   email: user.email,
   name: user.name,
@@ -34,9 +35,21 @@ export async function verifyPassword(password: string, hash: string) {
   return timingSafeEqual(actual, Buffer.from(encoded, "hex"));
 }
 
-async function signingKey() {
+function environmentSigningKeys(): SigningKeys | null {
+  const privateKey = process.env.STAFF_JWT_PRIVATE_KEY?.replace(/\\n/g, "\n");
+  const publicKey = process.env.STAFF_JWT_PUBLIC_KEY?.replace(/\\n/g, "\n");
+  if (!privateKey && !publicKey) return null;
+  if (!privateKey || !publicKey) {
+    throw new Error("Configure both STAFF_JWT_PRIVATE_KEY and STAFF_JWT_PUBLIC_KEY");
+  }
+  return { privateKey, publicKey };
+}
+
+async function signingKey(): Promise<SigningKeys> {
+  const configured = environmentSigningKeys();
+  if (configured) return configured;
   const existing = await prisma.staffSigningKey.findUnique({ where: { id: 1 } });
-  if (existing) return existing;
+  if (existing) return { privateKey: existing.privateKey, publicKey: existing.publicKey };
   const keys = await generateKeys("rsa", {
     modulusLength: 2048,
     publicKeyEncoding: { type: "spki", format: "pem" },
@@ -56,7 +69,15 @@ async function signingKey() {
   }
 }
 
-export async function issueStaffToken(user: StaffUser) {
+async function verificationKey() {
+  const configured = environmentSigningKeys();
+  if (configured) return configured.publicKey;
+  const existing = await prisma.staffSigningKey.findUnique({ where: { id: 1 }, select: { publicKey: true } });
+  if (!existing) throw unauthorized("Invalid or expired staff token");
+  return existing.publicKey;
+}
+
+export async function issueStaffToken(user: Admin) {
   const key = await signingKey();
   const accessToken = jwt.sign(
     { role: user.role, version: user.tokenVersion, creatorId: user.creatorId },
@@ -67,11 +88,10 @@ export async function issueStaffToken(user: StaffUser) {
 }
 
 export async function authenticateStaff(token: string) {
-  const key = await prisma.staffSigningKey.findUnique({ where: { id: 1 }, select: { publicKey: true } });
-  if (!key) throw unauthorized("Invalid or expired staff token");
+  const publicKey = await verificationKey();
   let claims: string | jwt.JwtPayload;
   try {
-    claims = jwt.verify(token, key.publicKey, {
+    claims = jwt.verify(token, publicKey, {
       algorithms: ["RS256"],
       issuer: ISSUER,
       audience: AUDIENCE,
@@ -84,7 +104,7 @@ export async function authenticateStaff(token: string) {
   if (typeof claims === "string" || typeof claims.sub !== "string" || !claims.sub || typeof claims.exp !== "number" || typeof claims.iat !== "number") {
     throw unauthorized("Invalid or expired staff token");
   }
-  const user = await prisma.staffUser.findUnique({ where: { id: claims.sub } });
+  const user = await prisma.admin.findUnique({ where: { id: claims.sub } });
   if (!user || user.disabled || user.tokenVersion !== claims.version || user.role !== claims.role || user.creatorId !== claims.creatorId) {
     throw unauthorized("Staff session is no longer valid. Sign in again");
   }
@@ -94,7 +114,7 @@ export async function authenticateStaff(token: string) {
 let dummyHash: Promise<string> | undefined;
 
 export async function loginStaff(email: string, password: string) {
-  const user = await prisma.staffUser.findUnique({ where: { email: email.trim().toLowerCase() } });
+  const user = await prisma.admin.findUnique({ where: { email: email.trim().toLowerCase() } });
   dummyHash ??= hashPassword(randomBytes(32).toString("hex"));
   const valid = await verifyPassword(password, user?.passwordHash ?? await dummyHash);
   if (!valid || !user || user.disabled) throw unauthorized("Invalid email or password");

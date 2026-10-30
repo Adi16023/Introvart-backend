@@ -146,7 +146,7 @@ export const seed: AppState = {
       commissionRate: 0.2,
     },
   ],
-  artworks: [
+  products: [
     {
       id: "a1",
       slug: "monsoon-window",
@@ -499,7 +499,7 @@ export const seed: AppState = {
   reviews: [
     {
       id: "r1",
-      artworkId: "a4",
+      productId: "a4",
       author: "Riya Kapoor",
       rating: 5,
       text: "Hung Estuary above the dining table in Indiranagar. The colour in the evening is exactly the photo.",
@@ -509,7 +509,7 @@ export const seed: AppState = {
     },
     {
       id: "r2",
-      artworkId: "a9",
+      productId: "a9",
       author: "Neel Shah",
       rating: 5,
       text: "Ordered Jasmine Hour with our wedding date. The crop was clean and the oak frame is heavier than I expected, in a good way.",
@@ -519,7 +519,7 @@ export const seed: AppState = {
     },
     {
       id: "r3",
-      artworkId: "a1",
+      productId: "a1",
       author: "Aisha Khan",
       rating: 4,
       text: "Beautiful print. I would have liked a slightly wider mat, but the colour is true.",
@@ -529,7 +529,7 @@ export const seed: AppState = {
     },
     {
       id: "r4",
-      artworkId: "a6",
+      productId: "a6",
       author: "Guest",
       rating: 2,
       text: "Frame arrived with a scuff. Asking for a replacement.",
@@ -976,7 +976,7 @@ export const policies = [
   {
     slug: "privacy",
     title: "Privacy",
-    body: "Photographs you upload for a custom print stay private. They are not listed in the shop and are not reused as marketing. Creator artwork is public once it is approved. This demo keeps everything in your browser.",
+    body: "Photographs you upload for a custom print stay private. They are not listed in the shop and are not reused as marketing. Creator product is public once it is approved. This demo keeps everything in your browser.",
   },
   {
     slug: "terms",

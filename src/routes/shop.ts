@@ -3,7 +3,7 @@ import { z } from "zod";
 import { json, prisma } from "../lib/db";
 import { badRequest, conflict, notFound, param, parse, uid } from "../lib/http";
 import { needCustomer, needOwner } from "../lib/identity";
-import { artworksByIds } from "../services/catalog";
+import { productsByIds } from "../services/catalog";
 import { computeTotals, loadPricedCart } from "../services/cart";
 import { commissions } from "../services/commissions";
 import { resolveMedia, resolveOne } from "../lib/media";
@@ -12,6 +12,13 @@ import { cancelOrder, getOrder, invoiceOf, placeOrder, recordPayment } from "../
 import { loadConfig } from "../services/pricing";
 import { openReturn } from "../services/returns";
 import { selectedVariant, variantAvailable } from "../services/product-variants";
+import {
+  addCustomerAddress,
+  deleteCustomerAddress,
+  listCustomerAddresses,
+  patchCustomerAddress,
+  saveCustomerAddressIfMissing,
+} from "../services/customer-addresses";
 import type { ProductVariant } from "@prisma/client";
 
 export const shopRouter = Router();
@@ -54,7 +61,7 @@ async function mergeGuest(guestOwner: string, customerId: string) {
   ]);
   await prisma.$transaction([
     prisma.cartItem.updateMany({ where: { ownerId: guestOwner }, data: { ownerId: customerId } }),
-    prisma.wishlistItem.createMany({ data: wishes.map((w) => ({ ownerId: customerId, artworkId: w.artworkId })), skipDuplicates: true }),
+    prisma.wishlistItem.createMany({ data: wishes.map((w) => ({ ownerId: customerId, productId: w.productId })), skipDuplicates: true }),
     prisma.wishlistItem.deleteMany({ where: { ownerId: guestOwner } }),
     prisma.follow.createMany({ data: follows.map((f) => ({ ownerId: customerId, artistId: f.artistId })), skipDuplicates: true }),
     prisma.follow.deleteMany({ where: { ownerId: guestOwner } }),
@@ -82,9 +89,9 @@ shopRouter.get("/me/export", needCustomer, async (req, res) => {
   const id = req.customerId!;
   const [customer, addresses, orders, designs, wishlist, commissionRows, tickets] = await Promise.all([
     prisma.customer.findUnique({ where: { id } }),
-    prisma.address.findMany({ where: { customerId: id } }),
+    listCustomerAddresses(id),
     prisma.order.findMany({ where: { customerId: id }, include: { items: true, returns: true } }),
-    prisma.savedDesign.findMany({ where: { ownerId: id } }),
+    prisma.saved.findMany({ where: { ownerId: id } }),
     prisma.wishlistItem.findMany({ where: { ownerId: id } }),
     prisma.commission.findMany({ where: { ownerId: id } }),
     prisma.ticket.findMany({ where: { ownerId: id } }),
@@ -99,13 +106,12 @@ shopRouter.delete("/me", needCustomer, async (req, res) => {
   await Promise.allSettled(files.map((file) => deleteObject(file.key)));
   await prisma.$transaction([
     prisma.upload.deleteMany({ where: { ownerId: id } }),
-    prisma.address.deleteMany({ where: { customerId: id } }),
-    prisma.savedDesign.deleteMany({ where: { ownerId: id } }),
+    prisma.saved.deleteMany({ where: { ownerId: id } }),
     prisma.wishlistItem.deleteMany({ where: { ownerId: id } }),
     prisma.follow.deleteMany({ where: { ownerId: id } }),
     prisma.recentView.deleteMany({ where: { ownerId: id } }),
     prisma.cartItem.deleteMany({ where: { ownerId: id } }),
-    prisma.customer.update({ where: { id }, data: { name: "Deleted customer", email: "", phone: "", city: "", credit: 0 } }),
+    prisma.customer.update({ where: { id }, data: { name: "Deleted customer", email: "", phone: "", city: "", credit: 0, addresses: json([]) } }),
   ]);
   res.status(204).end();
 });
@@ -123,24 +129,21 @@ const addressBody = z.object({
 });
 
 shopRouter.get("/me/addresses", needCustomer, async (req, res) => {
-  res.json(await prisma.address.findMany({ where: { customerId: req.customerId }, orderBy: { createdAt: "desc" } }));
+  res.json(await listCustomerAddresses(req.customerId!));
 });
 
 shopRouter.post("/me/addresses", needCustomer, async (req, res) => {
   const body = parse(addressBody, req.body);
-  res.status(201).json(await prisma.address.create({ data: { id: uid("AD"), customerId: req.customerId!, ...body } }));
+  res.status(201).json(await addCustomerAddress(req.customerId!, body));
 });
 
 shopRouter.patch("/me/addresses/:id", needCustomer, async (req, res) => {
   const body = parse(addressBody.partial(), req.body);
-  const result = await prisma.address.updateMany({ where: { id: param(req, "id"), customerId: req.customerId }, data: body });
-  if (!result.count) throw notFound("Address not found");
-  res.json(await prisma.address.findUnique({ where: { id: param(req, "id") } }));
+  res.json(await patchCustomerAddress(req.customerId!, param(req, "id"), body));
 });
 
 shopRouter.delete("/me/addresses/:id", needCustomer, async (req, res) => {
-  const result = await prisma.address.deleteMany({ where: { id: param(req, "id"), customerId: req.customerId } });
-  if (!result.count) throw notFound("Address not found");
+  await deleteCustomerAddress(req.customerId!, param(req, "id"));
   res.status(204).end();
 });
 
@@ -150,7 +153,7 @@ shopRouter.use(["/cart", "/checkout", "/orders", "/me", "/reviews", "/commission
 // ───────── cart ─────────
 
 const cartBody = z.object({
-  artworkId: z.string().optional(),
+  productId: z.string().optional(),
   variantId: z.string().optional(),
   title: z.string().min(1).max(160).optional(),
   artistName: z.string().max(120).optional(),
@@ -178,38 +181,38 @@ shopRouter.post("/cart/items", async (req, res) => {
   if (!config.materials.some((m) => m.id === body.materialId)) throw badRequest("Unknown material");
   if (!config.frames.some((f) => f.id === body.frameId)) throw badRequest("Unknown frame");
 
-  let data: { artworkId: string | null; title: string; artistName: string; image: string; fulfilment: string };
+  let data: { productId: string | null; title: string; artistName: string; image: string; fulfilment: string };
   let chosenVariant: ProductVariant | null = null;
-  if (body.artworkId) {
-    const artwork = await prisma.product.findFirst({ where: { id: body.artworkId, status: "approved", artist: { suspended: false } }, include: { artist: true, variants: true } });
-    if (!artwork) throw notFound("Artwork not available");
-    if (artwork.giftCard) throw badRequest("Purchase gift cards through the gift-card page");
-    const variant = selectedVariant(artwork.variants, body.variantId);
+  if (body.productId) {
+    const product = await prisma.product.findFirst({ where: { id: body.productId, status: "approved", artist: { suspended: false } }, include: { artist: true, variants: true } });
+    if (!product) throw notFound("Product not available");
+    if (product.giftCard) throw badRequest("Purchase gift cards through the gift-card page");
+    const variant = selectedVariant(product.variants, body.variantId);
     chosenVariant = variant;
     if (variant && !variantAvailable(variant, body.quantity)) throw conflict("The selected variant has insufficient stock");
-    if (artwork.fulfilment === "commission") throw badRequest("Commissions are requested, not added to the cart");
-    if (artwork.stock !== null && artwork.stock < 1) throw conflict(`${artwork.title} is sold out`);
-    if (artwork.fulfilment === "personalized") {
-      const fields = (artwork.personalization as { key: string; label: string }[] | null) ?? [];
+    if (product.fulfilment === "commission") throw badRequest("Commissions are requested, not added to the cart");
+    if (product.stock !== null && product.stock < 1) throw conflict(`${product.title} is sold out`);
+    if (product.fulfilment === "personalized") {
+      const fields = (product.personalization as { key: string; label: string }[] | null) ?? [];
       const missing = fields.find((field) => !body.personalization?.[field.key]?.trim());
       if (missing) throw badRequest(`${missing.label} is required`);
     }
     data = {
-      artworkId: artwork.id,
-      title: body.title ?? artwork.title,
-      artistName: artwork.artist.name,
-      image: artwork.image,
-      fulfilment: artwork.fulfilment,
+      productId: product.id,
+      title: body.title ?? product.title,
+      artistName: product.artist.name,
+      image: product.image,
+      fulfilment: product.fulfilment,
     };
   } else {
     if (body.variantId) throw badRequest("A variant requires a product");
     if (!body.title || !body.image) throw badRequest("Custom items need a title and an image");
     const image = await resolveOne(req, body.image, ["custom-print"]);
-    data = { artworkId: null, title: body.title, artistName: body.artistName ?? "Your photograph", image, fulfilment: "custom_print" };
+    data = { productId: null, title: body.title, artistName: body.artistName ?? "Your photograph", image, fulfilment: "custom_print" };
   }
 
   const candidates = await prisma.cartItem.findMany({
-    where: { ownerId: req.ownerId!, artworkId: data.artworkId, variantId: body.variantId ?? null, title: data.title, sizeId: body.sizeId, materialId: body.materialId, frameId: body.frameId },
+    where: { ownerId: req.ownerId!, productId: data.productId, variantId: body.variantId ?? null, title: data.title, sizeId: body.sizeId, materialId: body.materialId, frameId: body.frameId },
   });
   const existing = candidates.find((item) => JSON.stringify(item.personalization ?? {}) === JSON.stringify(body.personalization ?? {}));
   if (existing) {
@@ -323,11 +326,8 @@ shopRouter.post("/orders", async (req, res) => {
     gstInvoice: body.gstInvoice,
   });
   if (customer && body.saveAddress) {
-    const known = await prisma.address.findFirst({ where: { customerId: customer.id, line: body.address.line, pincode: body.address.pincode } });
-    if (!known) {
-      const { id: _id, ...fields } = body.address;
-      await prisma.address.create({ data: { id: uid("AD"), customerId: customer.id, ...fields } });
-    }
+    const { id: _id, ...fields } = body.address;
+    await saveCustomerAddressIfMissing(customer.id, { ...fields, label: fields.label ?? "Home" });
   }
   res.status(201).json(order);
 });
@@ -370,7 +370,7 @@ shopRouter.post("/me/orders/:id/cancel", async (req, res) => {
 // ───────── returns ─────────
 
 shopRouter.get("/me/returns", needCustomer, async (req, res) => {
-  res.json(await prisma.returnCase.findMany({ where: { order: { customerId: req.customerId } }, orderBy: { createdAt: "desc" } }));
+  res.json(await prisma.returns.findMany({ where: { order: { customerId: req.customerId } }, orderBy: { createdAt: "desc" } }));
 });
 
 shopRouter.post("/me/returns", needCustomer, async (req, res) => {
@@ -395,7 +395,7 @@ shopRouter.post("/me/returns", needCustomer, async (req, res) => {
 shopRouter.post("/reviews", async (req, res) => {
   const body = parse(
     z.object({
-      artworkId: z.string(),
+      productId: z.string(),
       rating: z.coerce.number().int().min(1).max(5),
       text: z.string().min(3).max(2000),
       photo: z.string().optional(),
@@ -403,50 +403,56 @@ shopRouter.post("/reviews", async (req, res) => {
     }),
     req.body,
   );
-  const artwork = await prisma.product.findUnique({ where: { id: body.artworkId } });
-  if (!artwork) throw notFound("Artwork not found");
+  const product = await prisma.product.findUnique({ where: { id: body.productId } });
+  if (!product) throw notFound("Product not found");
   const customer = req.customerId ? await prisma.customer.findUnique({ where: { id: req.customerId } }) : null;
   const author = customer?.name ?? body.author;
   if (!author) throw badRequest("Tell us your name");
-  const duplicate = await prisma.review.findFirst({ where: { artworkId: body.artworkId, ownerId: req.ownerId } });
+  const duplicate = await prisma.review.findFirst({ where: { productId: body.productId, ownerId: req.ownerId } });
   if (duplicate) throw conflict("You already reviewed this work");
   const bought = await prisma.orderItem.count({
-    where: { artworkId: body.artworkId, status: { in: ["shipped", "delivered"] }, order: { OR: [{ ownerId: req.ownerId }, ...(req.customerId ? [{ customerId: req.customerId }] : [])] } },
+    where: { productId: body.productId, status: { in: ["shipped", "delivered"] }, order: { OR: [{ ownerId: req.ownerId }, ...(req.customerId ? [{ customerId: req.customerId }] : [])] } },
   });
   const photo = body.photo ? await resolveOne(req, body.photo, ["review"], "photo") : undefined;
   const review = await prisma.review.create({
-    data: { id: uid("RV"), artworkId: body.artworkId, ownerId: req.ownerId, author, rating: body.rating, text: body.text, photo, status: "pending", verified: bought > 0 },
+    data: { id: uid("RV"), productId: body.productId, ownerId: req.ownerId, author, rating: body.rating, text: body.text, photo, status: "pending", verified: bought > 0 },
   });
   res.status(201).json(review);
 });
 
 shopRouter.post("/reviews/:id/helpful", async (req, res) => {
   const id = param(req, "id");
-  const review = await prisma.review.findFirst({ where: { id, status: "approved" } });
-  if (!review) throw notFound("Review not found");
-  const voted = await prisma.reviewVote.findUnique({ where: { reviewId_ownerId: { reviewId: id, ownerId: req.ownerId! } } });
-  if (voted) throw conflict("You already marked this helpful");
-  const [, updated] = await prisma.$transaction([
-    prisma.reviewVote.create({ data: { reviewId: id, ownerId: req.ownerId! } }),
-    prisma.review.update({ where: { id }, data: { helpful: { increment: 1 } } }),
-  ]);
-  res.json({ helpful: updated.helpful });
+  const updated = await prisma.$queryRaw<{ helpful: number }[]>`
+    UPDATE "Review"
+    SET "helpful" = "helpful" + 1,
+        "votes" = "votes" || jsonb_build_array(${req.ownerId!}::text)
+    WHERE "id" = ${id}
+      AND "status" = 'approved'
+      AND NOT ("votes" @> jsonb_build_array(${req.ownerId!}::text))
+    RETURNING "helpful"
+  `;
+  if (!updated.length) {
+    const review = await prisma.review.findFirst({ where: { id, status: "approved" }, select: { id: true } });
+    if (!review) throw notFound("Review not found");
+    throw conflict("You already marked this helpful");
+  }
+  res.json({ helpful: updated[0].helpful });
 });
 
 // ───────── designs ─────────
 
 shopRouter.get("/me/designs", async (req, res) => {
-  res.json(await prisma.savedDesign.findMany({ where: { ownerId: req.ownerId }, orderBy: { createdAt: "desc" } }));
+  res.json(await prisma.saved.findMany({ where: { ownerId: req.ownerId }, orderBy: { createdAt: "desc" } }));
 });
 
 shopRouter.post("/me/designs", async (req, res) => {
   const body = parse(z.object({ title: z.string().min(1).max(120), image: z.string().min(1), kind: z.string().max(40), detail: z.string().max(200) }), req.body);
   const image = await resolveOne(req, body.image, ["custom-print"]);
-  res.status(201).json(await prisma.savedDesign.create({ data: { id: uid("DS"), ownerId: req.ownerId!, ...body, image } }));
+  res.status(201).json(await prisma.saved.create({ data: { id: uid("DS"), ownerId: req.ownerId!, ...body, image } }));
 });
 
 shopRouter.delete("/me/designs/:id", async (req, res) => {
-  await prisma.savedDesign.deleteMany({ where: { id: param(req, "id"), ownerId: req.ownerId } });
+  await prisma.saved.deleteMany({ where: { id: param(req, "id"), ownerId: req.ownerId } });
   res.status(204).end();
 });
 
@@ -454,18 +460,18 @@ shopRouter.delete("/me/designs/:id", async (req, res) => {
 
 shopRouter.get("/me/wishlist", async (req, res) => {
   const rows = await prisma.wishlistItem.findMany({ where: { ownerId: req.ownerId }, orderBy: { createdAt: "desc" } });
-  res.json(await artworksByIds(rows.map((row) => row.artworkId)));
+  res.json(await productsByIds(rows.map((row) => row.productId)));
 });
 
-shopRouter.put("/me/wishlist/:artworkId", async (req, res) => {
-  const artworkId = param(req, "artworkId");
-  if (!(await prisma.product.findUnique({ where: { id: artworkId }, select: { id: true } }))) throw notFound("Artwork not found");
-  await prisma.wishlistItem.upsert({ where: { ownerId_artworkId: { ownerId: req.ownerId!, artworkId } }, create: { ownerId: req.ownerId!, artworkId }, update: {} });
+shopRouter.put("/me/wishlist/:productId", async (req, res) => {
+  const productId = param(req, "productId");
+  if (!(await prisma.product.findUnique({ where: { id: productId }, select: { id: true } }))) throw notFound("Product not found");
+  await prisma.wishlistItem.upsert({ where: { ownerId_productId: { ownerId: req.ownerId!, productId } }, create: { ownerId: req.ownerId!, productId }, update: {} });
   res.status(204).end();
 });
 
-shopRouter.delete("/me/wishlist/:artworkId", async (req, res) => {
-  await prisma.wishlistItem.deleteMany({ where: { ownerId: req.ownerId, artworkId: param(req, "artworkId") } });
+shopRouter.delete("/me/wishlist/:productId", async (req, res) => {
+  await prisma.wishlistItem.deleteMany({ where: { ownerId: req.ownerId, productId: param(req, "productId") } });
   res.status(204).end();
 });
 
@@ -489,23 +495,23 @@ shopRouter.delete("/me/follows/:artistId", async (req, res) => {
 
 shopRouter.get("/me/recent", async (req, res) => {
   const rows = await prisma.recentView.findMany({ where: { ownerId: req.ownerId }, orderBy: { at: "desc" }, take: 8 });
-  res.json(await artworksByIds(rows.map((row) => row.artworkId)));
+  res.json(await productsByIds(rows.map((row) => row.productId)));
 });
 
-shopRouter.post("/me/recent/:artworkId", async (req, res) => {
-  const artworkId = param(req, "artworkId");
-  if (!(await prisma.product.findUnique({ where: { id: artworkId }, select: { id: true } }))) throw notFound("Artwork not found");
-  await prisma.recentView.upsert({ where: { ownerId_artworkId: { ownerId: req.ownerId!, artworkId } }, create: { ownerId: req.ownerId!, artworkId }, update: { at: new Date() } });
+shopRouter.post("/me/recent/:productId", async (req, res) => {
+  const productId = param(req, "productId");
+  if (!(await prisma.product.findUnique({ where: { id: productId }, select: { id: true } }))) throw notFound("Product not found");
+  await prisma.recentView.upsert({ where: { ownerId_productId: { ownerId: req.ownerId!, productId } }, create: { ownerId: req.ownerId!, productId }, update: { at: new Date() } });
   res.status(204).end();
 });
 
 shopRouter.get("/me/searches", async (req, res) => {
-  const rows = await prisma.searchLog.findMany({ where: { ownerId: req.ownerId }, orderBy: { createdAt: "desc" }, take: 40 });
+  const rows = await prisma.searchHistory.findMany({ where: { ownerId: req.ownerId }, orderBy: { createdAt: "desc" }, take: 40 });
   res.json([...new Set(rows.map((row) => row.query))].slice(0, 6));
 });
 
 shopRouter.delete("/me/searches", async (req, res) => {
-  await prisma.searchLog.deleteMany({ where: { ownerId: req.ownerId } });
+  await prisma.searchHistory.deleteMany({ where: { ownerId: req.ownerId } });
   res.status(204).end();
 });
 

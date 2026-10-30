@@ -37,7 +37,7 @@ adminRouter.get("/dashboard", needAdmin(""), async (_req, res) => {
   const [gmv, orders, returns, queue, moderation, tickets, kyc, payouts] = await Promise.all([
     grossMerchandiseValue(),
     prisma.order.count(),
-    prisma.returnCase.count({ where: { status: { notIn: ["refunded", "closed", "rejected"] } } }),
+    prisma.returns.count({ where: { status: { notIn: ["refunded", "closed", "rejected"] } } }),
     prisma.printJob.count({ where: { status: { notIn: ["dispatched", "cancelled", "reprint"] } } }),
     prisma.product.count({ where: { status: "submitted" } }),
     prisma.ticket.count({ where: { status: { not: "resolved" } } }),
@@ -61,11 +61,11 @@ adminRouter.get("/customers", needAdmin("customers"), async (req, res) => {
 });
 
 adminRouter.get("/customers/:id", needAdmin("customers"), async (req, res) => {
-  const customer = await prisma.customer.findUnique({ where: { id: param(req, "id") }, include: { addresses: true } });
+  const customer = await prisma.customer.findUnique({ where: { id: param(req, "id") } });
   if (!customer) throw notFound("Customer not found");
   const [orders, returns, tickets] = await Promise.all([
     prisma.order.findMany({ where: { customerId: customer.id }, include: { items: true }, orderBy: { createdAt: "desc" } }),
-    prisma.returnCase.findMany({ where: { order: { customerId: customer.id } } }),
+    prisma.returns.findMany({ where: { order: { customerId: customer.id } } }),
     prisma.ticket.findMany({ where: { ownerId: customer.id } }),
   ]);
   res.json({ ...customer, orders, returns, tickets });
@@ -139,13 +139,13 @@ adminRouter.get("/moderation", needAdmin("moderation"), async (req, res) => {
   );
 });
 
-adminRouter.post("/artworks/:id/decision", needAdmin("moderation"), async (req, res) => {
+adminRouter.post("/products/:id/decision", needAdmin("moderation"), async (req, res) => {
   const body = parse(z.object({ decision: z.enum(["approve", "changes", "reject", "suspend"]), note: z.string().max(500).optional() }), req.body);
   if (body.decision !== "approve" && !body.note?.trim()) throw badRequest("A note is needed so the creator knows why");
   const status = { approve: "approved", changes: "changes_required", reject: "rejected", suspend: "suspended" }[body.decision];
-  const artwork = await prisma.product.update({ where: { id: param(req, "id") }, data: { status, moderatorNote: body.decision === "approve" ? null : body.note } });
-  await audit(prisma, actorLabel(req), `${status.replaceAll("_", " ")}: ${artwork.title}`);
-  res.json(artwork);
+  const product = await prisma.product.update({ where: { id: param(req, "id") }, data: { status, moderatorNote: body.decision === "approve" ? null : body.note } });
+  await audit(prisma, actorLabel(req), `${status.replaceAll("_", " ")}: ${product.title}`);
+  res.json(product);
 });
 
 adminRouter.get("/copyright", needAdmin("copyright"), async (_req, res) => {
@@ -155,9 +155,9 @@ adminRouter.get("/copyright", needAdmin("copyright"), async (_req, res) => {
 
 adminRouter.post("/copyright/:id/takedown", needAdmin("copyright"), async (req, res) => {
   const { note } = parse(z.object({ note: z.string().min(3).max(500) }), req.body);
-  const artwork = await prisma.product.update({ where: { id: param(req, "id") }, data: { status: "suspended", moderatorNote: note } });
-  await audit(prisma, actorLabel(req), `Copyright takedown on ${artwork.title}: ${note}`);
-  res.json(artwork);
+  const product = await prisma.product.update({ where: { id: param(req, "id") }, data: { status: "suspended", moderatorNote: note } });
+  await audit(prisma, actorLabel(req), `Copyright takedown on ${product.title}: ${note}`);
+  res.json(product);
 });
 
 // ───────── catalogue and pricing ─────────
@@ -264,7 +264,7 @@ adminRouter.post("/shipping/:jobId/awb", needAdmin("shipping"), async (req, res)
 
 adminRouter.get("/returns", needAdmin("returns"), async (req, res) => {
   const { status } = parse(z.object({ status: z.string().optional() }), req.query);
-  res.json(await prisma.returnCase.findMany({ where: status ? { status } : {}, include: { order: { select: { id: true, customerName: true, paymentMethod: true } } }, orderBy: { createdAt: "desc" } }));
+  res.json(await prisma.returns.findMany({ where: status ? { status } : {}, include: { order: { select: { id: true, customerName: true, paymentMethod: true } } }, orderBy: { createdAt: "desc" } }));
 });
 
 adminRouter.post("/returns/:id/decide", needAdmin("returns"), async (req, res) => {

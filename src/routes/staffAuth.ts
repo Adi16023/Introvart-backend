@@ -38,22 +38,22 @@ staffAuthRouter.post("/login", rateLimit({
 staffAuthRouter.use(staffGate);
 
 staffAuthRouter.get("/me", async (req, res) => {
-  const user = await prisma.staffUser.findUniqueOrThrow({ where: { id: req.staffId } });
+  const user = await prisma.admin.findUniqueOrThrow({ where: { id: req.staffId } });
   res.json(staffProfile(user));
 });
 
 staffAuthRouter.post("/logout", async (req, res) => {
-  await prisma.staffUser.update({ where: { id: req.staffId }, data: { tokenVersion: { increment: 1 } } });
+  await prisma.admin.update({ where: { id: req.staffId }, data: { tokenVersion: { increment: 1 } } });
   res.status(204).end();
 });
 
 staffAuthRouter.post("/password", async (req, res) => {
   const body = parse(z.object({ currentPassword: z.string().min(1).max(128), newPassword: password }).strict(), req.body);
-  const user = await prisma.staffUser.findUniqueOrThrow({ where: { id: req.staffId } });
+  const user = await prisma.admin.findUniqueOrThrow({ where: { id: req.staffId } });
   if (!await verifyPassword(body.currentPassword, user.passwordHash)) {
     throw badRequest("Current password is incorrect");
   }
-  await prisma.staffUser.update({
+  await prisma.admin.update({
     where: { id: user.id },
     data: { passwordHash: await hashPassword(body.newPassword), tokenVersion: { increment: 1 } },
   });
@@ -62,7 +62,7 @@ staffAuthRouter.post("/password", async (req, res) => {
 });
 
 staffAuthRouter.get("/staff", needAdmin("roles"), async (_req, res) => {
-  const users = await prisma.staffUser.findMany({ orderBy: { createdAt: "asc" } });
+  const users = await prisma.admin.findMany({ orderBy: { createdAt: "asc" } });
   res.json(users.map((user) => ({ ...staffProfile(user), disabled: user.disabled })));
 });
 
@@ -72,7 +72,7 @@ staffAuthRouter.post("/staff", needAdmin("roles"), async (req, res) => {
   if (body.creatorId && !await prisma.artist.findUnique({ where: { id: body.creatorId }, select: { id: true } })) {
     throw badRequest("Unknown creator");
   }
-  const user = await prisma.staffUser.create({
+  const user = await prisma.admin.create({
     data: { email: body.email, name: body.name, role: body.role, creatorId: body.creatorId, passwordHash: await hashPassword(body.password) },
   });
   await audit(prisma, actorLabel(req), `Created staff account ${user.email} with role ${user.role}`);
@@ -87,10 +87,10 @@ staffAuthRouter.patch("/staff/:id", needAdmin("roles"), async (req, res) => {
   }).strict().refine((value) => Object.keys(value).length > 0), req.body);
   const id = param(req, "id");
   if (id === req.staffId) throw badRequest("Use another super administrator to change this account");
-  const existing = await prisma.staffUser.findUnique({ where: { id } });
+  const existing = await prisma.admin.findUnique({ where: { id } });
   if (!existing) throw notFound("Staff account not found");
   if (body.role === "creator" && !existing.creatorId) throw badRequest("A creator account requires creatorId");
-  const user = await prisma.staffUser.update({
+  const user = await prisma.admin.update({
     where: { id },
     data: {
       role: body.role,

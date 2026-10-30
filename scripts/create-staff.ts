@@ -48,7 +48,7 @@ async function main() {
     }
   }
   z.string().min(12).max(128).parse(password);
-  const user = await prisma.staffUser.create({
+  const user = await prisma.admin.create({
     data: {
       email: account.email,
       name: account.name,

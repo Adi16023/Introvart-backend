@@ -82,9 +82,9 @@ export async function placeOrder(input: PlaceOrderInput) {
         });
         if (!reserved.count) throw conflict(`${line.title} just sold out`);
       }
-      if (line.artwork && line.artwork.stock !== null) {
+      if (line.product && line.product.stock !== null) {
         const reserved = await tx.product.updateMany({
-          where: { id: line.artwork.id, stock: { gte: line.quantity } },
+          where: { id: line.product.id, stock: { gte: line.quantity } },
           data: { stock: { decrement: line.quantity } },
         });
         if (reserved.count === 0) throw conflict(`${line.title} just sold out`);
@@ -117,7 +117,7 @@ export async function placeOrder(input: PlaceOrderInput) {
         items: {
           create: lines.map((line) => ({
             id: uid("OI"),
-            artworkId: line.artworkId,
+            productId: line.productId,
             variantId: line.variantId,
             sku: line.variant?.sku ?? "",
             title: line.title,
@@ -132,7 +132,7 @@ export async function placeOrder(input: PlaceOrderInput) {
             status: "pending_payment",
             gift: line.gift,
             giftMessage: line.giftMessage,
-            creatorId: line.artwork?.artistId,
+            creatorId: line.product?.artistId,
             personalization: line.personalization ?? undefined,
           })),
         },
@@ -194,8 +194,8 @@ async function releaseStock(tx: Tx, order: Order & { items: OrderItem[] }) {
       where: { id: item.variantId, inventoryTracker: { not: "" } },
       data: { inventoryQuantity: { increment: item.quantity } },
     });
-    if (!item.artworkId) continue;
-    await tx.product.updateMany({ where: { id: item.artworkId, stock: { not: null } }, data: { stock: { increment: item.quantity } } });
+    if (!item.productId) continue;
+    await tx.product.updateMany({ where: { id: item.productId, stock: { not: null } }, data: { stock: { increment: item.quantity } } });
   }
   await tx.order.update({ where: { id: order.id }, data: { stockReserved: false } });
 }
@@ -214,14 +214,14 @@ async function reserveStock(tx: Tx, order: Order & { items: OrderItem[] }) {
         if (!taken.count) throw conflict(`${item.title} sold out while payment was pending`);
       }
     }
-    if (!item.artworkId) continue;
-    const artwork = await tx.product.findUnique({ where: { id: item.artworkId }, select: { stock: true, title: true } });
-    if (artwork && artwork.stock !== null) {
+    if (!item.productId) continue;
+    const product = await tx.product.findUnique({ where: { id: item.productId }, select: { stock: true, title: true } });
+    if (product && product.stock !== null) {
       const taken = await tx.product.updateMany({
-        where: { id: item.artworkId, stock: { gte: item.quantity } },
+        where: { id: item.productId, stock: { gte: item.quantity } },
         data: { stock: { decrement: item.quantity } },
       });
-      if (taken.count === 0) throw conflict(`${artwork.title} sold out while payment was pending`);
+      if (taken.count === 0) throw conflict(`${product.title} sold out while payment was pending`);
     }
   }
   await tx.order.update({ where: { id: order.id }, data: { stockReserved: true } });

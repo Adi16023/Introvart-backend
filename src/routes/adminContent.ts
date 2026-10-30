@@ -27,7 +27,7 @@ const bannerBody = z.object({
 adminContentRouter.get("/cms", needAdmin("cms"), async (_req, res) => {
   const [banners, posts, policies, collections, occasions] = await Promise.all([
     prisma.banner.findMany({ orderBy: { sort: "asc" } }),
-    prisma.post.findMany({ orderBy: { createdAt: "desc" } }),
+    prisma.blog.findMany({ orderBy: { createdAt: "desc" } }),
     prisma.policy.findMany(),
     prisma.collection.findMany({ orderBy: { sort: "asc" } }),
     prisma.occasion.findMany({ orderBy: { sort: "asc" } }),
@@ -62,16 +62,16 @@ const postBody = z.object({ title: z.string().min(2).max(160), lede: z.string().
 adminContentRouter.post("/cms/posts", needAdmin("cms"), async (req, res) => {
   const body = parse(postBody, req.body);
   const slug = slugify(body.title);
-  if (await prisma.post.findUnique({ where: { slug } })) throw conflict("A post with that title exists");
-  res.status(201).json(await prisma.post.create({ data: { slug, ...body } }));
+  if (await prisma.blog.findUnique({ where: { slug } })) throw conflict("A post with that title exists");
+  res.status(201).json(await prisma.blog.create({ data: { slug, ...body } }));
 });
 
 adminContentRouter.patch("/cms/posts/:slug", needAdmin("cms"), async (req, res) => {
-  res.json(await prisma.post.update({ where: { slug: param(req, "slug") }, data: parse(postBody.partial(), req.body) }));
+  res.json(await prisma.blog.update({ where: { slug: param(req, "slug") }, data: parse(postBody.partial(), req.body) }));
 });
 
 adminContentRouter.delete("/cms/posts/:slug", needAdmin("cms"), async (req, res) => {
-  await prisma.post.delete({ where: { slug: param(req, "slug") } });
+  await prisma.blog.delete({ where: { slug: param(req, "slug") } });
   res.status(204).end();
 });
 
@@ -179,16 +179,16 @@ adminContentRouter.delete("/coupons/:code", needAdmin("promotions"), async (req,
 
 adminContentRouter.get("/reviews", needAdmin("reviews"), async (req, res) => {
   const { status } = parse(z.object({ status: z.string().optional() }), req.query);
-  res.json(await prisma.review.findMany({ where: status ? { status } : {}, include: { artwork: { select: { title: true, slug: true } } }, orderBy: { createdAt: "desc" } }));
+  res.json(await prisma.review.findMany({ where: status ? { status } : {}, include: { product: { select: { title: true, slug: true } } }, orderBy: { createdAt: "desc" } }));
 });
 
 // The seeded rating covers reviews that predate this table, so the aggregate is adjusted rather than recomputed.
 adminContentRouter.post("/reviews/:id/moderate", needAdmin("reviews"), async (req, res) => {
   const { status } = parse(z.object({ status: z.enum(["approved", "rejected", "pending"]) }), req.body);
-  const review = await prisma.review.findUnique({ where: { id: param(req, "id") }, include: { artwork: true } });
+  const review = await prisma.review.findUnique({ where: { id: param(req, "id") }, include: { product: true } });
   if (!review) throw notFound("Review not found");
   if (review.status !== status) {
-    const { rating, reviewCount } = review.artwork;
+    const { rating, reviewCount } = review.product;
     let nextCount = reviewCount;
     let nextRating = rating;
     if (status === "approved") {
@@ -200,7 +200,7 @@ adminContentRouter.post("/reviews/:id/moderate", needAdmin("reviews"), async (re
     }
     await prisma.$transaction([
       prisma.review.update({ where: { id: review.id }, data: { status } }),
-      prisma.product.update({ where: { id: review.artworkId }, data: { reviewCount: nextCount, rating: Math.round(nextRating * 10) / 10 } }),
+      prisma.product.update({ where: { id: review.productId }, data: { reviewCount: nextCount, rating: Math.round(nextRating * 10) / 10 } }),
     ]);
   }
   await audit(prisma, actorLabel(req), `Review ${review.id} marked ${status}`);
@@ -232,7 +232,7 @@ adminContentRouter.post("/tickets/:id/reply", needAdmin("support"), async (req, 
 // ───────── B2B ─────────
 
 adminContentRouter.get("/b2b", needAdmin("b2b"), async (_req, res) => {
-  res.json(await prisma.b2BLead.findMany({ orderBy: { createdAt: "desc" } }));
+  res.json(await prisma.bulkOrder.findMany({ orderBy: { createdAt: "desc" } }));
 });
 
 adminContentRouter.patch("/b2b/:id", needAdmin("b2b"), async (req, res) => {
@@ -243,7 +243,7 @@ adminContentRouter.patch("/b2b/:id", needAdmin("b2b"), async (req, res) => {
     }),
     req.body,
   );
-  const lead = await prisma.b2BLead.update({
+  const lead = await prisma.bulkOrder.update({
     where: { id: param(req, "id") },
     data: { ...(body.quote ? { quote: body.quote, status: body.status ?? "quoted" } : body.status ? { status: body.status } : {}) },
   });
@@ -287,7 +287,7 @@ adminContentRouter.post("/gift-cards/:id/void", needAdmin("gift-cards"), async (
 // ───────── roles, audit, settings, analytics ─────────
 
 const ROLE_NOTES: Record<string, string> = {
-  moderator: "Artwork, creators, copyright, reviews. No payout release.",
+  moderator: "Product, creators, copyright, reviews. No payout release.",
   support: "Customers, orders, tickets, returns. No pricing, no bank details.",
   operations: "Jobs, shipping, returns. No campaigns, no permissions.",
   finance: "Payments, payouts, reports, gift cards. No publishing.",
@@ -301,7 +301,7 @@ adminContentRouter.get("/roles", needAdmin("roles"), (_req, res) => {
 
 adminContentRouter.get("/audit", needAdmin("audit"), async (req, res) => {
   const { limit, q } = parse(z.object({ limit: z.coerce.number().int().min(1).max(500).default(100), q: z.string().optional() }), req.query);
-  res.json(await prisma.auditLog.findMany({ where: q ? { OR: [{ action: { contains: q, mode: "insensitive" } }, { actor: { contains: q, mode: "insensitive" } }] } : {}, orderBy: { at: "desc" }, take: limit }));
+  res.json(await prisma.activity.findMany({ where: q ? { OR: [{ action: { contains: q, mode: "insensitive" } }, { actor: { contains: q, mode: "insensitive" } }] } : {}, orderBy: { at: "desc" }, take: limit }));
 });
 
 adminContentRouter.get("/settings", needAdmin("settings"), async (_req, res) => {
@@ -319,11 +319,11 @@ adminContentRouter.put("/settings", needAdmin("settings"), async (req, res) => {
 adminContentRouter.get("/analytics", needAdmin("analytics"), async (_req, res) => {
   const since = new Date(Date.now() - 30 * 86400000);
   const [searches, wishlist, orders, gmv, logs, top] = await Promise.all([
-    prisma.searchLog.count({ where: { createdAt: { gte: since } } }),
+    prisma.searchHistory.count({ where: { createdAt: { gte: since } } }),
     prisma.wishlistItem.count(),
     prisma.order.count({ where: { createdAt: { gte: since } } }),
     grossMerchandiseValue(),
-    prisma.searchLog.findMany({ where: { createdAt: { gte: since } }, select: { query: true, results: true } }),
+    prisma.searchHistory.findMany({ where: { createdAt: { gte: since } }, select: { query: true, results: true } }),
     prisma.orderItem.groupBy({ by: ["title"], _sum: { quantity: true }, where: { status: { notIn: ["cancelled", "pending_payment"] } }, orderBy: { _sum: { quantity: "desc" } }, take: 5 }),
   ]);
   const counts = new Map<string, number>();
