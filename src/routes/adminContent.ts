@@ -6,6 +6,7 @@ import { actorLabel, needAdmin, roleMatrix, staffGate } from "../lib/identity";
 import { resolveOne } from "../lib/media";
 import { canonicalMediaUrl } from "../lib/storage";
 import { audit } from "../services/audit";
+import { loadMenu, menuSchema, saveMenu } from "../services/menu";
 import { commissions } from "../services/commissions";
 import { issueGiftCard } from "../services/giftcards";
 import { grossMerchandiseValue } from "./admin";
@@ -34,6 +35,16 @@ adminContentRouter.get("/cms", needAdmin("cms"), async (_req, res) => {
     prisma.occasion.findMany({ orderBy: { sort: "asc" } }),
   ]);
   res.json({ banners, posts, policies, collections: collections.map((collection) => ({ ...collection, image: canonicalMediaUrl(collection.image) })), occasions });
+});
+
+adminContentRouter.get("/cms/menu", needAdmin("cms"), async (_req, res) => {
+  res.json(await loadMenu());
+});
+
+adminContentRouter.put("/cms/menu", needAdmin("cms"), async (req, res) => {
+  const menu = await saveMenu(req, parse(menuSchema, req.body));
+  await audit(prisma, actorLabel(req), "Updated storefront menu settings");
+  res.json(menu);
 });
 
 adminContentRouter.post("/cms/banners", needAdmin("cms"), async (req, res) => {

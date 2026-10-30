@@ -261,6 +261,13 @@ model Config {
   updatedAt          DateTime @updatedAt
 }
 
+// Single-row table (id = 1) holding the storefront header menu settings.
+model MenuConfig {
+  id        Int      @id @default(1)
+  data      Json
+  updatedAt DateTime @updatedAt
+}
+
 model Coupon {
   code       String   @id
   label      String

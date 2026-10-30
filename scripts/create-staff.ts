@@ -36,18 +36,18 @@ async function main() {
     const output = new Writable({ write(_chunk, _encoding, done) { done(); } });
     const input = createInterface({ input: process.stdin, output, terminal: true });
     try {
-      process.stdout.write("Password (12-128 characters; input hidden): ");
+      process.stdout.write("Password (9-128 characters; input hidden): ");
       password = await input.question("");
       process.stdout.write("\nConfirm password (input hidden): ");
       const confirmation = await input.question("");
       process.stdout.write("\n");
-      z.string().min(12).max(128).parse(password);
+      z.string().min(9).max(128).parse(password);
       if (password !== confirmation) throw new Error("Passwords do not match");
     } finally {
       input.close();
     }
   }
-  z.string().min(12).max(128).parse(password);
+  z.string().min(9).max(128).parse(password);
   const user = await prisma.admin.create({
     data: {
       email: account.email,

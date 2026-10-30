@@ -8,7 +8,7 @@ import { hashPassword, loginStaff, staffProfile, verifyPassword } from "../servi
 import { audit } from "../services/audit";
 
 export const staffAuthRouter = Router();
-const password = z.string().min(12).max(128);
+const password = z.string().min(9).max(128);
 const email = z.string().trim().toLowerCase().email().max(254);
 const role = z.enum(["moderator", "support", "operations", "finance", "marketing", "super", "creator"]);
 const account = z.object({

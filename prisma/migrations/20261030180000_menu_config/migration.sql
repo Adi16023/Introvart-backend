@@ -1,0 +1,10 @@
+BEGIN;
+
+CREATE TABLE "MenuConfig" (
+  "id" INTEGER NOT NULL DEFAULT 1,
+  "data" JSONB NOT NULL,
+  "updatedAt" TIMESTAMP(3) NOT NULL,
+  CONSTRAINT "MenuConfig_pkey" PRIMARY KEY ("id")
+);
+
+COMMIT;

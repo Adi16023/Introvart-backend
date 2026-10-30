@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "../lib/db";
 import { notFound, param, parse, uid } from "../lib/http";
 import { canonicalMediaUrl } from "../lib/storage";
+import { loadMenu } from "../services/menu";
 import { productsByIds, listProducts, matches, present, type ProductWithArtist } from "../services/catalog";
 import { balanceOf, issueGiftCard } from "../services/giftcards";
 import { fromPrice, loadConfig, pincodeInfo, unitPrice } from "../services/pricing";
@@ -157,6 +158,10 @@ publicRouter.get("/artists/:slug", async (req, res) => {
 
 // ───────── curation ─────────
 
+publicRouter.get("/menu", async (_req, res) => {
+  res.json(await loadMenu());
+});
+
 publicRouter.get("/collections", async (_req, res) => {
   const collections = await prisma.collection.findMany({ orderBy: { sort: "asc" } });
   res.json(collections.map((collection) => ({ ...collection, image: canonicalMediaUrl(collection.image) })));
@@ -196,15 +201,40 @@ publicRouter.get("/search", async (req, res) => {
 });
 
 publicRouter.get("/search/suggest", async (req, res) => {
-  const { q } = parse(z.object({ q: z.string().min(1).max(60) }), req.query);
-  const [products, artists] = await Promise.all([
-    prisma.product.findMany({ where: { status: "approved" }, include: { artist: artistSelect } }),
-    prisma.artist.findMany({ where: { suspended: false, verified: true } }),
+  const { q, limit } = parse(z.object({
+    q: z.string().trim().min(1).max(60),
+    limit: z.coerce.number().int().min(1).max(8).default(5),
+  }), req.query);
+  const needle = q.toLowerCase();
+  const [config, products, artists] = await Promise.all([
+    loadConfig(),
+    prisma.product.findMany({
+      where: { status: "approved", fulfilment: { not: "commission" }, artist: { suspended: false } },
+      include: { artist: artistSelect, ...productInclude },
+    }),
+    prisma.artist.findMany({ where: { suspended: false, verified: true }, select: { slug: true, name: true } }),
   ]);
-  const works = (products as ProductWithArtist[]).filter((a) => matches(q, a, a.artist.name)).slice(0, 6);
+  // Rank by letters typed: title prefix, then a word prefix, then anywhere in the title, then artist/category/tags.
+  // Short queries skip the loose full-text match so one or two letters stay relevant.
+  const rank = (product: ProductWithArtist) => {
+    const title = product.title.toLowerCase();
+    if (title.startsWith(needle)) return 0;
+    if (title.split(/\W+/).some((word) => word.startsWith(needle))) return 1;
+    if (title.includes(needle)) return 2;
+    if (product.artist.name.toLowerCase().includes(needle) || product.category.toLowerCase().includes(needle) || product.tags.some((tag) => tag.toLowerCase().includes(needle))) return 3;
+    return needle.length >= 3 && matches(q, product, product.artist.name) ? 4 : -1;
+  };
+  const ranked = (products as ProductWithArtist[])
+    .map((product) => ({ product, score: rank(product) }))
+    .filter((entry) => entry.score >= 0)
+    .sort((a, b) => a.score - b.score || b.product.rating - a.product.rating)
+    .slice(0, limit);
   res.json({
-    products: works.map((a) => ({ id: a.id, slug: a.slug, title: a.title, artist: a.artist.name, image: a.image })),
-    artists: artists.filter((a) => a.name.toLowerCase().includes(q.toLowerCase())).slice(0, 4).map((a) => ({ slug: a.slug, name: a.name })),
+    products: ranked.map(({ product }) => ({
+      id: product.id, slug: product.slug, title: product.title, artist: product.artist.name,
+      category: product.category, image: product.image, price: fromPrice(config, product),
+    })),
+    artists: artists.filter((artist) => artist.name.toLowerCase().includes(needle)).slice(0, 4),
   });
 });
 
