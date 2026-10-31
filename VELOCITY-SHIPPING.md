@@ -44,7 +44,6 @@ Velocity dashboard rather than fetched automatically by the server.
 Admin navigation uses the same expandable child-page pattern as Content:
 
 - Overview: existing production queue and dispatch metrics.
-- Connection & setup: backend key/environment status and authentication guidance.
 - Pickup warehouses: registration/linking, with optional GST on creation.
 - Serviceability: eligible couriers between two pincodes.
 - Rate calculator: standalone forward/COD/return quotes, including optional QC.
@@ -57,6 +56,10 @@ Admin navigation uses the same expandable child-page pattern as Content:
 - Velocity forward orders / Velocity return orders: account-wide search, pagination,
   detailed responses and the PDF's advanced filter parameters.
 - Summary reports: UTC time-range summaries for forward and return journeys.
+
+Results use courier comparison cards, shipment tables with readable details,
+tracking timelines, charge breakdowns and status-summary reports rather than raw
+JSON. The former setup child page is removed; existing links redirect to Overview.
 
 Account-wide read tools never import remote orders or change local refunds.
 Forward date filters send Unix seconds; return date filters use the ISO UTC strings
