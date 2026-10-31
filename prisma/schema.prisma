@@ -44,6 +44,11 @@ model Artist {
   id                String    @id
   slug              String    @unique
   name              String
+  firstName         String    @default("")
+  lastName          String    @default("")
+  websiteUrl        String    @default("")
+  behanceUrl        String    @default("")
+  portfolioLinks    String[]  @default([])
   city              String    @default("")
   bio               String    @default("")
   cover             String    @default("")

@@ -6,6 +6,7 @@ import { badRequest, notFound, param, parse } from "../lib/http";
 import { actorLabel, needAdmin, staffGate } from "../lib/identity";
 import { hashPassword, loginStaff, staffProfile, verifyPassword } from "../services/staff-auth";
 import { audit } from "../services/audit";
+import { registerArtist, registrationLimit } from "../services/artist-registration";
 
 export const staffAuthRouter = Router();
 const password = z.string().min(9).max(128);
@@ -34,6 +35,8 @@ staffAuthRouter.post("/login", rateLimit({
   const body = parse(z.object({ email, password: z.string().min(1).max(128) }).strict(), req.body);
   res.json(await loginStaff(body.email, body.password));
 });
+
+staffAuthRouter.post("/artist/register", registrationLimit, registerArtist);
 
 staffAuthRouter.use(staffGate);
 

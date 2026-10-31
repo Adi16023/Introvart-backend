@@ -25,6 +25,11 @@ Warehouses are database configuration, not environment variables:
 - Admin > Shipment > Pickup warehouses: use owner `platform` for the print partner
   or `creator:<artist ID>` for an artist.
 - Creator > Shipping: a verified creator can configure only their own warehouse.
+  The signed-in artist portal now lives at `/artist`, with Shipping at
+  `/artist/studio/shipping`. Older `/creator/...` links redirect to the new URLs.
+  Public `/artist/<slug>` profiles remain separate. Email/password sign-in routes
+  artist accounts to their linked studio; a manually entered artist ID cannot
+  authorize access.
 - Link an existing warehouse by entering its Velocity warehouse ID and exact
   registered pickup name, address, contact information and pincode.
 - Leaving the ID blank explicitly creates a new warehouse through Velocity.
@@ -38,6 +43,34 @@ Labels from Velocity's documented S3 host are retained immediately, because thei
 original signed URLs expire. Prepare label returns a five-minute signed URL after
 staff/creator authorization. Other upstream label hosts must be downloaded in the
 Velocity dashboard rather than fetched automatically by the server.
+
+To create an artist login and a new studio together, run this in the backend
+environment with `DATABASE_URL` configured:
+
+```sh
+npm run staff:create -- --role creator --name "Artist name" --email "artist@example.com" --new-artist
+```
+
+Enter and confirm the password at the hidden prompts. The studio and hashed-password
+login are created atomically. Existing accounts are not overwritten. For an existing
+studio, use `--creator-id <artist-id>` instead of `--new-artist`.
+
+Artists can also use the storefront **Sign in** popup and select **Register**.
+The animated three-step flow collects first/last name, email, phone, Individual
+or Business account type, optional Business GSTIN, and optional website, Behance
+and up to five other portfolio links. Passwords require 8–128 characters with
+uppercase, lowercase, a number and a special character, plus matching confirmation.
+`POST /api/v1/auth/artist/register` creates the studio and creator-role login in
+one transaction and returns the existing one-hour staff session. The legacy
+`POST /api/v1/creator/register` uses the same validation and rate limit; it no
+longer creates passwordless orphan studios. Contact details are not OTP-verified.
+Public artist responses still exclude contact/KYC details.
+
+Deploy migration `20261031120000_artist_registration` before enabling this flow.
+It only adds defaulted artist name/portfolio columns; existing studios and logins
+are preserved. Guests visiting `/artist` get the same sign-in popup; old
+`/sign-in` links open it on the storefront rather than a standalone login page.
+Guests visiting `/admin` get a centered admin-only login form, without registration.
 
 ## Daily workflow
 

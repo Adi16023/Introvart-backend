@@ -18,7 +18,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "smoke": "tsx scripts/smoke.ts",
     "staff:create": "tsx scripts/create-staff.ts",
-    "test:auth": "tsx --test scripts/auth.test.ts",
+    "test:auth": "tsx --test scripts/auth.test.ts scripts/artist-registration.test.ts",
     "test:products": "tsx --test scripts/products.test.ts",
     "test:shipping": "tsx --test scripts/shipping.test.ts",
     "test:products:db": "tsx --test scripts/products.integration.test.ts",

@@ -8,30 +8,13 @@ import { resolveOne } from "../lib/media";
 import { audit } from "../services/audit";
 import { commissions } from "../services/commissions";
 import { ledgerFor } from "../services/earnings";
+import { behanceUrl, portfolioUrl, registerArtist, registrationLimit } from "../services/artist-registration";
 
 export const creatorRouter = Router();
 
 // ───────── registration (open) ─────────
 
-creatorRouter.post("/register", async (req, res) => {
-  const body = parse(
-    z.object({
-      name: z.string().min(2).max(80),
-      email: z.string().email(),
-      phone: z.string().regex(/^[0-9+\-\s]{10,15}$/),
-      accountType: z.enum(["Individual", "Business"]).default("Individual"),
-      city: z.string().max(60).default(""),
-    }),
-    req.body,
-  );
-  const base = slugify(body.name) || "studio";
-  let slug = base;
-  for (let n = 2; await prisma.artist.findUnique({ where: { slug } }); n += 1) slug = `${base}-${n}`;
-  const artist = await prisma.artist.create({
-    data: { id: uid("cr").toLowerCase(), slug, name: body.name, email: body.email.toLowerCase(), phone: body.phone, accountType: body.accountType, city: body.city },
-  });
-  res.status(201).json(artist);
-});
+creatorRouter.post("/register", registrationLimit, registerArtist);
 
 creatorRouter.use(staffGate, needCreator);
 
@@ -48,6 +31,9 @@ creatorRouter.patch("/profile", async (req, res) => {
       bio: z.string().max(2000).optional(),
       city: z.string().max(60).optional(),
       social: z.string().max(200).optional(),
+      websiteUrl: portfolioUrl.optional(),
+      behanceUrl: behanceUrl.optional(),
+      portfolioLinks: z.array(portfolioUrl.refine(value => !!value, "A link cannot be empty")).max(5).optional(),
       cover: z.string().optional(),
       portrait: z.string().optional(),
       styles: z.array(z.string().max(40)).max(10).optional(),

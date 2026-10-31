@@ -8,12 +8,14 @@ import { prisma } from "../src/lib/db";
 import { hashPassword } from "../src/services/staff-auth";
 
 async function main() {
+  if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is not configured. Run this command in the connected backend environment.");
   const { values } = parseArgs({
     options: {
       email: { type: "string" },
       name: { type: "string" },
       role: { type: "string", default: "super" },
       "creator-id": { type: "string" },
+      "new-artist": { type: "boolean", default: false },
       "generate-password": { type: "boolean", default: false },
     },
   });
@@ -25,7 +27,8 @@ async function main() {
   }).parse(values);
   const generatedPassword = values["generate-password"] === true;
   if (!generatedPassword && !process.stdin.isTTY) throw new Error("Run this command in an interactive terminal to enter the password securely");
-  if (account.role === "creator" && !account["creator-id"]) throw new Error("--creator-id is required for a creator account");
+  if (values["new-artist"] && (account.role !== "creator" || account["creator-id"])) throw new Error("--new-artist requires --role creator without --creator-id");
+  if (account.role === "creator" && !account["creator-id"] && !values["new-artist"]) throw new Error("--creator-id or --new-artist is required for an artist account");
   if (account["creator-id"] && !await prisma.artist.findUnique({ where: { id: account["creator-id"] }, select: { id: true } })) {
     throw new Error("Unknown creator ID");
   }
@@ -48,15 +51,21 @@ async function main() {
     }
   }
   z.string().min(9).max(128).parse(password);
-  const user = await prisma.admin.create({
-    data: {
-      email: account.email,
-      name: account.name,
-      role: account.role,
-      creatorId: account["creator-id"],
-      passwordHash: await hashPassword(password),
-    },
-    select: { id: true, email: true, role: true },
+  const passwordHash = await hashPassword(password);
+  const user = await prisma.$transaction(async (tx) => {
+    let creatorId = account["creator-id"];
+    if (values["new-artist"]) {
+      const suffix = randomBytes(8).toString("hex");
+      const artist = await tx.artist.create({
+        data: { id: `cr-${suffix}`, slug: `artist-${suffix}`, name: account.name, email: account.email, styles: [], mediums: [] },
+        select: { id: true },
+      });
+      creatorId = artist.id;
+    }
+    return tx.admin.create({
+      data: { email: account.email, name: account.name, role: account.role, creatorId, passwordHash },
+      select: { id: true, email: true, role: true, creatorId: true },
+    });
   });
   console.log("Staff account created:", user);
   if (generatedPassword) console.log("Initial password (shown once):", password);
