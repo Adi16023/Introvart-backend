@@ -7,6 +7,7 @@ import { z } from "zod";
 import { buildApp } from "../src/app";
 import { prisma, type Tx } from "../src/lib/db";
 import { env } from "../src/lib/env";
+import { HttpError } from "../src/lib/http";
 import { assignShipment, bookingSchema, bookShipment, cancelAwbs, cancelShipment, customerTracking, ensureDispatchAwb, reconcileShipping, refreshShipment, saveWarehouse, shippingLabel, shippingLine } from "../src/services/shipping";
 import { cancelOrder } from "../src/services/orders";
 import { decideReturn } from "../src/services/returns";
@@ -135,7 +136,19 @@ test("Velocity integration uses mocks only; no live shipping or database calls",
   t.after(async () => { await prisma.$disconnect(); });
 
   const parcel = { itemId: item.id, jobId: "job-1", length: 30, width: 20, height: 5, weightGrams: 750 };
-  const rates = { status: "SUCCESS", result: { serviceable_couriers: [{ carrier_id: "carrier-1", carrier_name: "Test carrier", charges: { total_forward_charges: 100 } }], shipment_details: { applicable_weight: 750 } } };
+  const rates = { status: "SUCCESS", result: {
+    serviceable_couriers: [{
+      carrier_id: "carrier-1", carrier_name: "Test carrier", carrier_code: "TEST",
+      service_level: "standard", is_fast: false, is_prime: false, status: "active",
+      expected_delivery: { pickup: "2026-10-31", delivery: "2026-11-03" },
+      charges: { forward_freight_charges: 85, cod_charges: 25, rto_charges: 85, total_forward_charges: 110 },
+      platform_fee: 5,
+    }],
+    shipment_details: {
+      journey_type: "forward", origin_pincode: "400001", destination_pincode: "110001",
+      payment_method: "cod", dead_weight: 750, volumetric_weight: 1500, applicable_weight: 1500, zone: "B",
+    },
+  } };
   function bookingMock(endpoint: string) {
     if (endpoint === "rates") return rates;
     if (endpoint === "forward-order") return { status: 1, payload: { order_id: "remote-order", shipment_id: "remote-shipment" } };
@@ -150,10 +163,11 @@ test("Velocity integration uses mocks only; no live shipping or database calls",
     }])) };
   }
 
-  await t.test("rates use grams, cm, lower-case payment modes and no assumed return QC", async () => {
+  await t.test("rates use grams, cm, lower-case payment modes and the documented return QC default", async () => {
     assert.equal(rateBody(parcel, "400001", "110001", "forward", 1149).dead_weight, 750);
     assert.equal(rateBody(parcel, "400001", "110001", "forward", 1149).payment_method, "cod");
-    assert.equal(rateBody(parcel, "110001", "400001", "return").qc_applicable, false);
+    assert.equal(rateBody(parcel, "110001", "400001", "return").qc_applicable, true);
+    assert.equal(rateBody(parcel, "110001", "400001", "return", 0, false).qc_applicable, false);
     assert.equal(packageSchema.safeParse({ ...parcel, height: 0 }).success, false);
     assert.equal(packageSchema.safeParse({ ...parcel, weightGrams: Infinity }).success, false);
   });
@@ -170,7 +184,12 @@ test("Velocity integration uses mocks only; no live shipping or database calls",
     remote = () => ({ status: 0, payload: {} });
     await assert.rejects(velocityRequest("rates", {}, ratesSchema), /operation failure/);
     remote = () => ({ status: "SUCCESS", result: {} });
-    await assert.rejects(velocityRequest("rates", {}, ratesSchema), /unexpected response/);
+    await assert.rejects(velocityRequest("rates", {}, ratesSchema), (error: unknown) => {
+      assert.ok(error instanceof HttpError);
+      assert.match(error.message, /unexpected response.*result/);
+      assert.match(JSON.stringify(error.details), /"path":"result"/);
+      return true;
+    });
   });
   await t.test("client rejects unknown hosts and missing keys before network requests", async () => {
     const count = calls.length;

@@ -100,6 +100,9 @@ have order-line shipping records.
 
 ## Tracking, errors and cancellation
 
+- A 502 "unexpected response" from a Velocity quote includes schema issue paths in
+  the error message and API details. Compare those paths with the rates response
+  example in the Velocity PDF; the backend does not log or return the full payload.
 - A five-minute backend task reconciles up to 25 active shipments, oldest/unsynced
   first. It reads tracking only and never books parcels. It needs an always-on
   backend process. Staff can also use Refresh / reconcile.

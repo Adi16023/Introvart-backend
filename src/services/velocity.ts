@@ -10,8 +10,8 @@ const endpoints = [
 type Endpoint = (typeof endpoints)[number];
 
 export class VelocityError extends HttpError {
-  constructor(public remoteStatus: number, message: string) {
-    super(502, message);
+  constructor(public remoteStatus: number, message: string, details?: unknown) {
+    super(502, message, details);
   }
 }
 
@@ -51,7 +51,21 @@ export async function velocityRequest<T>(endpoint: Endpoint, body: unknown, sche
     throw new VelocityError(response.status, "Velocity reported a shipping operation failure. Review it in the Velocity dashboard.");
   }
   const parsed = schema.safeParse(payload);
-  if (!parsed.success) throw new VelocityError(response.status, "Velocity returned an unexpected response. Reconcile before retrying.");
+  if (!parsed.success) {
+    const issues = parsed.error.issues.map((issue) => ({
+      path: issue.path.join("."),
+      code: issue.code,
+      message: issue.message,
+    }));
+    const paths = [...new Set(issues.map((issue) => issue.path || "response"))];
+    const summary = paths.slice(0, 5).join(", ");
+    const omitted = paths.length - 5;
+    throw new VelocityError(response.status,
+      `Velocity returned an unexpected response (schema issues: ${summary}${omitted > 0 ? `, and ${omitted} more` : ""}). Reconcile before retrying.`,
+      {
+        issues,
+      });
+  }
   return parsed.data;
 }
 
@@ -100,7 +114,7 @@ export const serviceabilityResultSchema = z.object({
 export const laneRateSchema = packageSchema.extend({
   origin: pincode, destination: pincode, journey: z.enum(["forward", "return"]),
   paymentMode: z.enum(["prepaid", "cod"]), codAmount: z.number().finite().nonnegative().max(10_000_000).default(0),
-  qcApplicable: z.boolean().default(false),
+  qcApplicable: z.boolean().default(true),
 }).strict().refine((data) => data.journey !== "forward" || data.paymentMode !== "cod" || data.codAmount > 0, "COD shipment value must be positive.");
 
 const filterText = z.string().max(200);
@@ -157,7 +171,7 @@ export function rateBody(
   destination: string,
   journey: "forward" | "return",
   codAmount = 0,
-  qcApplicable = false,
+  qcApplicable = true,
 ) {
   packageSchema.parse(parcel);
   return {
