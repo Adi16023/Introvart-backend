@@ -6,6 +6,7 @@ import { actorLabel, ADMIN_ROLES, canAccess, needAdmin, staffGate } from "../lib
 import { audit } from "../services/audit";
 import { ledgerFor, creatorShare } from "../services/earnings";
 import { setJobStatus } from "../services/jobs";
+import { ensureDispatchAwb } from "../services/shipping";
 import { cancelOrder, getOrder, markDelivered } from "../services/orders";
 import { cashfreeConfigured, refundOnGateway } from "../services/cashfree";
 import { env } from "../lib/env";
@@ -259,6 +260,9 @@ adminRouter.post("/shipping/:jobId/ndr", needAdmin("shipping"), async (req, res)
 
 adminRouter.post("/shipping/:jobId/awb", needAdmin("shipping"), async (req, res) => {
   const { awb } = parse(z.object({ awb: z.string().min(4).max(40) }), req.body);
+  const existing = await prisma.printJob.findUnique({ where: { id: param(req, "jobId") } });
+  if (!existing) throw notFound("Print job not found");
+  await ensureDispatchAwb(existing.itemId, existing.id, awb);
   const job = await prisma.printJob.update({ where: { id: param(req, "jobId") }, data: { awb } });
   await prisma.orderItem.updateMany({ where: { id: job.itemId }, data: { awb } });
   res.json(job);

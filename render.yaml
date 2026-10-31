@@ -35,6 +35,10 @@ services:
         value: us-east-2
       - key: CASHFREE_APP_ID
         sync: false
+      - key: VELOCITY_API_KEY
+        sync: false
+      - key: VELOCITY_API_BASE_URL
+        value: https://shazam.velocity.in
       - key: CASHFREE_SECRET_KEY
         sync: false
       - key: CASHFREE_ENV # sandbox while testing, production for live payments

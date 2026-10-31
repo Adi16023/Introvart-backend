@@ -11,7 +11,7 @@ async function refundReturnOnGateway(returnId: string) {
   if (!found || ["refunded", "rejected", "closed"].includes(found.status)) return;
   const item = found.order.items.find((entry) => entry.id === found.itemId || (!found.itemId && entry.title === found.itemTitle));
   if (!item || found.order.paymentMethod === "COD") return;
-  await refundOnGateway(found.order, item.unitPrice * item.quantity, `Return ${returnId}`);
+  await refundOnGateway(found.order, item.unitPrice * item.quantity, `Return ${returnId}`, `RF-${returnId}`);
 }
 
 export async function openReturn(input: {
@@ -53,19 +53,41 @@ export async function openReturn(input: {
   });
 }
 
-export const RETURN_DECISIONS = ["refunded", "replacement", "reprint", "rejected", "evidence_review", "closed"] as const;
+export const RETURN_DECISIONS = ["refunded", "replacement", "reprint", "rejected", "evidence_review", "pickup_approved", "closed"] as const;
 
 export async function decideReturn(returnId: string, decision: (typeof RETURN_DECISIONS)[number]) {
-  if (decision === "refunded") await refundReturnOnGateway(returnId);
+  const resolving = !["evidence_review", "pickup_approved"].includes(decision);
+  const previousStatus = await transaction(async (tx) => {
+    const initial = await tx.returns.findUnique({ where: { id: returnId } });
+    if (!initial) throw notFound("Return not found");
+    await tx.$queryRaw`SELECT "id" FROM "Order" WHERE "id" = ${initial.orderId} FOR UPDATE`;
+    const found = await tx.returns.findUnique({ where: { id: returnId } });
+    if (!found) throw notFound("Return not found");
+    if (["refunded", "rejected", "closed", "resolving"].includes(found.status)) throw conflict(`Return is already ${found.status}`);
+    if (resolving) {
+      const pickup = await tx.shippingShipment.findFirst({ where: { returnCaseId: returnId, state: { not: "cancelled" } } });
+      if (pickup && pickup.status !== "return_delivered") throw conflict("Wait for the physical return to arrive or confirm pickup cancellation before resolving this case.");
+    }
+    const previousStatus = found.status;
+    await tx.returns.update({ where: { id: returnId }, data: { status: resolving ? "resolving" : decision } });
+    return previousStatus;
+  });
+  if (!resolving) return prisma.returns.findUniqueOrThrow({ where: { id: returnId } });
+  try {
+    if (decision === "refunded") await refundReturnOnGateway(returnId);
+    return await completeReturnDecision(returnId, decision);
+  } catch (error) {
+    await prisma.returns.updateMany({ where: { id: returnId, status: "resolving" }, data: { status: previousStatus } });
+    throw error;
+  }
+}
+
+async function completeReturnDecision(returnId: string, decision: (typeof RETURN_DECISIONS)[number]) {
   return transaction(async (tx) => {
     const found = await tx.returns.findUnique({ where: { id: returnId }, include: { order: { include: { items: true } } } });
     if (!found) throw notFound("Return not found");
     if (["refunded", "rejected", "closed"].includes(found.status)) throw conflict(`Return is already ${found.status}`);
     const item = found.order.items.find((entry) => entry.id === found.itemId || (!found.itemId && entry.title === found.itemTitle));
-
-    if (decision === "evidence_review") {
-      return tx.returns.update({ where: { id: returnId }, data: { status: decision } });
-    }
 
     if (decision === "refunded") {
       if (!item) throw badRequest("Order line missing for this return");

@@ -259,6 +259,28 @@ export async function recordPayment(orderId: string, result: "paid" | "failed") 
 const CANCELLABLE = ["pending_payment", "confirmed"];
 
 export async function cancelOrder(orderId: string) {
+  const claimed = await transaction(async (tx) => {
+    await tx.$queryRaw`SELECT "id" FROM "Order" WHERE "id" = ${orderId} FOR UPDATE`;
+    const order = await tx.order.findUnique({ where: { id: orderId }, include: { items: true } });
+    if (!order) throw notFound("Order not found");
+    if (["cancelled", "refunded"].includes(order.paymentStatus)) return false;
+    if (order.shippingBlocked) throw conflict("Cancellation is already in progress. Refresh before retrying.");
+    if (order.items.some((item) => !CANCELLABLE.includes(item.status))) throw conflict("Production or dispatch has started. Open a return instead.");
+    const shipments = await tx.shippingShipment.count({ where: { orderId, state: { not: "cancelled" } } });
+    if (shipments) throw conflict("Cancel Velocity shipments and confirm cancellation before cancelling/refunding the order.");
+    await tx.order.update({ where: { id: orderId }, data: { shippingBlocked: true } });
+    return true;
+  });
+  if (!claimed) return getOrder(orderId);
+  try {
+    return await completeCancellation(orderId);
+  } catch (error) {
+    await prisma.order.updateMany({ where: { id: orderId, paymentStatus: { notIn: ["cancelled", "refunded"] } }, data: { shippingBlocked: false } });
+    throw error;
+  }
+}
+
+async function completeCancellation(orderId: string) {
   // A paid online order is refunded on Cashfree first, so a failed refund leaves the order untouched.
   const before = await prisma.order.findUnique({ where: { id: orderId }, include: { items: true } });
   if (before && before.paymentStatus === "pending" && before.paymentMethod === "ONLINE" && cashfreeConfigured()) {

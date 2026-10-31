@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { env } from "./env";
 import { HttpError } from "./http";
 
@@ -77,3 +78,10 @@ export async function putObject(key: string, body: Buffer, contentType: string) 
 
 export const getObject = (key: string) => s3().send(new GetObjectCommand({ Bucket: env.s3.bucket, Key: key }));
 export const deleteObject = (key: string) => s3().send(new DeleteObjectCommand({ Bucket: env.s3.bucket, Key: key }));
+
+export function signedShippingLabel(key: string) {
+  return getSignedUrl(s3(), new GetObjectCommand({
+    Bucket: env.s3.bucket, Key: key, ResponseContentType: "application/pdf",
+    ResponseContentDisposition: 'inline; filename="shipping-label.pdf"', ResponseCacheControl: "private, no-store",
+  }), { expiresIn: 300 });
+}

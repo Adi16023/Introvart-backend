@@ -1,5 +1,7 @@
 import { transaction } from "../lib/db";
 import { badRequest, conflict, notFound, uid } from "../lib/http";
+import { prisma } from "../lib/db";
+import { ensureDispatchAwb } from "./shipping";
 
 export const FLOW = ["accepted", "printing", "framing", "qc", "packing", "ready", "dispatched"] as const;
 
@@ -16,6 +18,11 @@ const ITEM_STATUS: Record<string, string> = {
 export async function setJobStatus(jobId: string, status: string, extra: { defect?: string; awb?: string } = {}) {
   if (status !== "reprint" && !(FLOW as readonly string[]).includes(status)) {
     throw badRequest(`Status must be one of ${[...FLOW, "reprint"].join(", ")}`);
+  }
+  if (status === "dispatched") {
+    const job = await prisma.printJob.findUnique({ where: { id: jobId } });
+    if (!job) throw notFound("Job not found");
+    extra = { ...extra, awb: await ensureDispatchAwb(job.itemId, job.id, extra.awb) };
   }
   return transaction(async (tx) => {
     const job = await tx.printJob.findUnique({ where: { id: jobId } });
@@ -43,7 +50,8 @@ export async function setJobStatus(jobId: string, status: string, extra: { defec
       return updated;
     }
 
-    const awb = status === "dispatched" ? extra.awb || job.awb || `INTV${Date.now().toString().slice(-9)}` : job.awb;
+    const awb = status === "dispatched" ? extra.awb || job.awb : job.awb;
+    if (status === "dispatched" && !awb) throw badRequest("Book the parcel in Velocity or enter a real external courier AWB before dispatching.");
     const updated = await tx.printJob.update({
       where: { id: jobId },
       data: { status, defect: extra.defect ?? job.defect, awb, ...(status === "dispatched" ? { ndr: "clear" } : {}) },

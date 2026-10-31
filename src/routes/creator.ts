@@ -3,6 +3,7 @@ import { z } from "zod";
 import { json, prisma } from "../lib/db";
 import { badRequest, conflict, forbidden, notFound, param, parse, slugify, uid } from "../lib/http";
 import { needCreator, staffGate } from "../lib/identity";
+import { ensureDispatchAwb } from "../services/shipping";
 import { resolveOne } from "../lib/media";
 import { audit } from "../services/audit";
 import { commissions } from "../services/commissions";
@@ -301,7 +302,9 @@ creatorRouter.post("/orders/:orderId/items/:itemId/dispatch", async (req, res) =
   const { awb } = parse(z.object({ awb: z.string().min(4).max(40).optional() }), req.body ?? {});
   const item = await ownSellerItem(req, param(req, "orderId"), param(req, "itemId"));
   if (item.status !== "accepted") throw conflict("Accept the order before dispatching it");
-  res.json(await prisma.orderItem.update({ where: { id: item.id }, data: { status: "shipped", awb: awb ?? item.awb } }));
+  const assignedAwb = await ensureDispatchAwb(item.id, undefined, awb);
+  if (!assignedAwb && !item.awb) throw badRequest("Book the parcel in Velocity or enter a real external courier AWB before dispatching.");
+  res.json(await prisma.orderItem.update({ where: { id: item.id }, data: { status: "shipped", awb: assignedAwb ?? item.awb } }));
 });
 
 creatorRouter.get("/inventory", async (req, res) => {

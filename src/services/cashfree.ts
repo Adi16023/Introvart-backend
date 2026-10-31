@@ -139,10 +139,11 @@ export async function refundOnGateway(
   order: { id: string; gatewayPaymentId: string | null; payable: number; refunded: number },
   amount: number,
   note: string,
+  refundId?: string,
 ) {
   if (!order.gatewayPaymentId) return null;
   const refundable = Math.min(amount, order.payable - order.refunded);
   if (refundable <= 0) return null;
-  const refundId = `RF-${order.id}-${crypto.randomBytes(3).toString("hex")}`.slice(0, 40);
-  return createCashfreeRefund({ orderId: order.id, refundId, amount: refundable, note });
+  const reference = refundId ?? `RF-${order.id}-${crypto.randomBytes(3).toString("hex")}`.slice(0, 40);
+  return createCashfreeRefund({ orderId: order.id, refundId: reference, amount: refundable, note });
 }

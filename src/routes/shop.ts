@@ -12,6 +12,7 @@ import { cancelOrder, getOrder, invoiceOf, placeOrder } from "../services/orders
 import { confirmPayment, startPayment } from "../services/payments";
 import { loadConfig } from "../services/pricing";
 import { openReturn } from "../services/returns";
+import { customerTracking } from "../services/shipping";
 import { selectedVariant, variantAvailable } from "../services/product-variants";
 import {
   addCustomerAddress,
@@ -362,6 +363,11 @@ shopRouter.get("/me/orders", async (req, res) => {
 
 shopRouter.get("/me/orders/:id", async (req, res) => {
   res.json(await ownOrder(req, param(req, "id")));
+});
+
+shopRouter.get("/me/orders/:id/tracking", async (req, res) => {
+  await ownOrder(req, param(req, "id"));
+  res.json(await customerTracking(param(req, "id")));
 });
 
 shopRouter.get("/me/orders/:id/invoice", async (req, res) => {

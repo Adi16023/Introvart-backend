@@ -16,6 +16,7 @@ import { publicRouter } from "./routes/public";
 import { shopRouter } from "./routes/shop";
 import { staffAuthRouter } from "./routes/staffAuth";
 import { productsRouter } from "./routes/products";
+import { shippingRouter } from "./routes/shipping";
 
 export function buildApp() {
   const app = express();
@@ -47,6 +48,9 @@ export function buildApp() {
   api.use(paymentsWebhookRouter);
   api.use("/auth", staffAuthRouter);
   api.use("/admin/products", productsRouter);
+  api.use("/admin/shipping-tools", shippingRouter);
+  api.use("/creator/shipping", shippingRouter);
+  api.use("/fulfil/shipping", shippingRouter);
   api.use("/creator", creatorRouter);
   api.use("/admin", adminRouter, adminContentRouter);
   api.use("/fulfil", fulfilRouter);

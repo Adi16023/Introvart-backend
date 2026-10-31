@@ -22,6 +22,10 @@ export const env = {
   publicUrl,
   // Public address of the storefront, used to send shoppers back to their order after a payment.
   frontendUrl: (process.env.FRONTEND_URL ?? "").replace(/\/$/, ""),
+  velocity: {
+    apiKey: process.env.VELOCITY_API_KEY ?? "",
+    baseUrl: (process.env.VELOCITY_API_BASE_URL ?? "https://shazam.velocity.in").replace(/\/+$/, ""),
+  },
   cashfree: {
     appId: process.env.CASHFREE_APP_ID ?? "",
     secretKey: process.env.CASHFREE_SECRET_KEY ?? "",

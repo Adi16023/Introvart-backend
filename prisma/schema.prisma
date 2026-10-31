@@ -391,11 +391,13 @@ model Order {
   gstInvoice     Boolean  @default(true)
   stockReserved  Boolean  @default(false)
   settled        Boolean  @default(false) // gift card / credit / coupon already redeemed
+  shippingBlocked Boolean @default(false)
   gatewayPaymentId String? // Cashfree payment reference once an online payment succeeds
 
   items   OrderItem[]
   jobs    PrintJob[]
   returns Returns[]
+  shipments ShippingShipment[]
 
   @@index([customerId])
   @@index([createdAt])
@@ -466,6 +468,62 @@ model Returns {
   createdAt DateTime @default(now())
 
   @@index([orderId])
+}
+
+model ShippingWarehouse {
+  id               String   @id
+  owner            String   @unique
+  velocityId       String   @unique
+  name             String
+  contactPerson    String
+  phone            String
+  email            String
+  address          String
+  city             String
+  state            String
+  pincode          String
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+model ShippingShipment {
+  id               String   @id
+  bookingKey       String   @unique
+  orderId          String
+  order            Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  itemId           String
+  jobId            String?
+  returnCaseId     String?
+  creatorId        String?
+  warehouseId      String
+  journey          String
+  state            String   @default("creating")
+  status           String   @default("pending")
+  remoteOrderId    String?
+  remoteShipmentId String?
+  remoteReturnId   String?
+  awb              String?  @unique
+  carrierId        String?
+  carrierName      String?
+  labelUrl         String?
+  labelKey         String?
+  trackingUrl      String?
+  length           Float
+  width            Float
+  height           Float
+  weightGrams      Float
+  codAmount        Float    @default(0)
+  request          Json
+  charges          Json     @default("{}")
+  tracking         Json     @default("[]")
+  error            String?
+  syncedAt         DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([orderId])
+  @@index([creatorId])
+  @@index([state, updatedAt])
 }
 
 // Every file stored in the bucket is registered here; media fields elsewhere may only point at these.

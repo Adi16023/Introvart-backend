@@ -3,6 +3,8 @@ import { env } from "./lib/env";
 import { prisma } from "./lib/db";
 import { activateDueGiftCards } from "./services/giftcards";
 import { reconcilePendingPayments } from "./services/payments";
+import { reconcileShipping } from "./services/shipping";
+import { velocityConfigured } from "./services/velocity";
 
 const app = buildApp();
 const server = app.listen(env.port, () => console.log(`Introvart API listening on :${env.port}`));
@@ -19,9 +21,20 @@ const paymentTimer = setInterval(() => {
 }, 5 * 60 * 1000);
 paymentTimer.unref();
 
+let shippingRunning = false;
+const shippingTimer = setInterval(() => {
+  if (!velocityConfigured() || shippingRunning) return;
+  shippingRunning = true;
+  reconcileShipping()
+    .catch((error) => console.error("Shipping reconciliation failed", error))
+    .finally(() => { shippingRunning = false; });
+}, 5 * 60_000);
+shippingTimer.unref();
+
 async function shutdown() {
   clearInterval(timer);
   clearInterval(paymentTimer);
+  clearInterval(shippingTimer);
   server.close();
   await prisma.$disconnect();
   process.exit(0);
