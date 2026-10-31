@@ -176,6 +176,29 @@ test("Velocity integration uses mocks only; no live shipping or database calls",
     assert.equal(lines.reduce((sum, line) => sum + Math.round(codAllocation(100.01, lines, line.id) * 100), 0), 10001);
     assert.throws(() => codAllocation(10, [], "missing"), /no value/);
   });
+  await t.test("rates retain object estimates and accept unavailable estimates without weakening courier validation", async () => {
+    const courier = rates.result.serviceable_couriers[0];
+    const estimate = {
+      pickup: { date: "2026-10-31T12:00:00+05:30", timezone: "Asia/Kolkata" },
+      delivery: { minimum_days: 2, maximum_days: 4 },
+    };
+    remote = () => ({ ...rates, result: { ...rates.result, serviceable_couriers: [
+      { ...courier, expected_delivery: estimate },
+      { ...courier, carrier_id: "carrier-2", expected_delivery: { pickup: null } },
+      { ...courier, carrier_id: "carrier-3", expected_delivery: null },
+      courier,
+    ] } });
+    const parsed = await velocityRequest("rates", {}, ratesSchema);
+    assert.deepEqual(parsed.result.serviceable_couriers[0].expected_delivery, estimate);
+    assert.deepEqual(parsed.result.serviceable_couriers[1].expected_delivery, { pickup: null });
+    assert.equal(parsed.result.serviceable_couriers[2].expected_delivery, null);
+    assert.deepEqual(parsed.result.serviceable_couriers[3].expected_delivery, courier.expected_delivery);
+    for (const expected_delivery of [{ pickup: [] }, { delivery: true }]) {
+      assert.equal(ratesSchema.safeParse({ ...rates, result: { ...rates.result, serviceable_couriers: [{ ...courier, expected_delivery }] } }).success, false);
+    }
+    assert.equal(ratesSchema.safeParse({ ...rates, result: { ...rates.result, serviceable_couriers: [{ ...courier, carrier_id: null }] } }).success, false);
+    assert.equal(ratesSchema.safeParse({ ...rates, result: { ...rates.result, serviceable_couriers: [{ ...courier, charges: null }] } }).success, false);
+  });
   await t.test("client rejects auth failures, malformed JSON and business failures without exposing credentials", async () => {
     remote = () => new Response("", { status: 401 });
     await assert.rejects(velocityRequest("rates", {}, ratesSchema), /rejected the API key/);
@@ -187,7 +210,8 @@ test("Velocity integration uses mocks only; no live shipping or database calls",
     await assert.rejects(velocityRequest("rates", {}, ratesSchema), (error: unknown) => {
       assert.ok(error instanceof HttpError);
       assert.match(error.message, /unexpected response.*result/);
-      assert.match(JSON.stringify(error.details), /"path":"result"/);
+      assert.match(JSON.stringify(error.details), /"path":"result\.serviceable_couriers"/);
+      assert.match(JSON.stringify(error.details), /"path":"result\.shipment_details"/);
       return true;
     });
   });

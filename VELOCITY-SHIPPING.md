@@ -60,6 +60,9 @@ Admin navigation uses the same expandable child-page pattern as Content:
 Results use courier comparison cards, shipment tables with readable details,
 tracking timelines, charge breakdowns and status-summary reports rather than raw
 JSON. The former setup child page is removed; existing links redirect to Overview.
+Rate estimates may be strings or structured pickup/delivery objects. Both are
+retained and displayed as readable fields; unavailable estimates are shown as
+not provided rather than preventing courier comparison.
 
 Account-wide read tools never import remote orders or change local refunds.
 Forward date filters send Unix seconds; return date filters use the ISO UTC strings

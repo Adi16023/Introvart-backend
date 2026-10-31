@@ -82,13 +82,18 @@ export const remoteBookingSchema = z.object({
   }).passthrough(),
 });
 
+const deliveryEstimateSchema = z.union([z.string(), z.record(z.string(), z.unknown())]).nullable();
+
 export const ratesSchema = z.object({
   result: z.object({
     serviceable_couriers: z.array(z.object({
       carrier_id: z.string(),
       carrier_name: z.string(),
       service_level: z.string().optional(),
-      expected_delivery: z.object({ pickup: z.string(), delivery: z.string() }).optional(),
+      expected_delivery: z.object({
+        pickup: deliveryEstimateSchema.optional(),
+        delivery: deliveryEstimateSchema.optional(),
+      }).nullable().optional(),
       charges: z.record(z.string(), z.unknown()),
       platform_fee: z.number().optional(),
     }).passthrough()),
