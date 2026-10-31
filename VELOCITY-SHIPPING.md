@@ -44,6 +44,10 @@ Velocity dashboard rather than fetched automatically by the server.
 Admin navigation uses the same expandable child-page pattern as Content:
 
 - Overview: existing production queue and dispatch metrics.
+- Orders: Velocity-style status tabs, customer/product/package/pickup columns,
+  search, UTC date/payment/warehouse filters, pagination, current-page CSV export,
+  and a courier comparison drawer with Standard/Express filtering and per-courier
+  Ship actions. Separate Introvart and live Velocity-account views are provided.
 - Pickup warehouses: registration/linking, with optional GST on creation.
 - Serviceability: eligible couriers between two pincodes.
 - Rate calculator: standalone forward/COD/return quotes, including optional QC.
@@ -65,6 +69,30 @@ retained and displayed as readable fields; unavailable estimates are shown as
 not provided rather than preventing courier comparison.
 
 Account-wide read tools never import remote orders or change local refunds.
+The Orders drawer can assign a courier to an existing, unassigned external
+Velocity forward shipment through `forward-order-shipment`; it never creates a
+second order. A `VelocityAssignment` database claim prevents concurrent or
+uncertain assignment retries. Deploy the new migration before using this page.
+Uncertain attempts must be reconciled in Velocity; this page intentionally does
+not automatically clear a claim or resend assignment.
+External rates use the original Velocity pickup/destination/COD details, and
+the documented full-text search uses the order display ID and verifies the exact
+shipment ID. Enter dimensions in cm and weight in grams, and confirm they match
+the package already saved in Velocity: the assignment API cannot edit packages.
+When Velocity supplies an actual weight, a different entered weight is rejected.
+Linked Introvart shipments must use the Introvart view and its existing booking/
+assignment safeguards. Local rows summarize the latest production parcel per
+order line; historical parcels remain available in details. Introvart bookings
+preserve readiness, COD allocation, cancellation locks and existing customer prices.
+Status counts use local filtered records or Velocity's list `meta.total`, not
+guessed counts. Missing remote totals are explicitly reported. Courier ordering
+preserves Velocity's response; no recommendation score or rating is fabricated.
+Fastest sorting is enabled only for complete, comparable dates or numeric
+delivery-day estimates.
+Bulk cancellation retains the existing pre-pickup check and 50-AWB limit.
+External labels are shown only when returned by Velocity; linked local labels
+use existing authorized storage. Tracking and cancellation remain read/request
+operations and do not replace Introvart's return/refund workflow.
 Forward date filters send Unix seconds; return date filters use the ISO UTC strings
 shown in the PDF examples.
 Return-only support roles see only permitted return child pages. All new endpoints

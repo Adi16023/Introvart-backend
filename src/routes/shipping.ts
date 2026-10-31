@@ -11,8 +11,9 @@ import {
 } from "../services/shipping";
 import {
   velocityConfigured, velocityRequest, serviceabilitySchema, serviceabilityResultSchema,
-  laneRateSchema, rateBody, ratesSchema, forwardFilterSchema, returnFilterSchema, remoteListResultSchema,
+  laneRateSchema, packageSchema, rateBody, ratesSchema, forwardFilterSchema, returnFilterSchema, remoteListResultSchema,
 } from "../services/velocity";
+import { assignRemoteOrder, localShippingOrders, orderTabs, quoteRemoteOrder } from "../services/shipping-orders";
 import { env } from "../lib/env";
 import { PRESS_TYPES, SELLER_TYPES } from "../services/pricing";
 
@@ -68,6 +69,51 @@ shippingRouter.post("/remote/:journey", async (req, res) => {
   adminPermission(req, journey);
   const input = journey === "forward" ? parse(forwardFilterSchema, req.body) : parse(returnFilterSchema, req.body);
   res.json(await velocityRequest(journey === "forward" ? "shipments" : "returns", input, remoteListResultSchema));
+});
+
+shippingRouter.get("/order-records", async (req, res) => {
+  adminPermission(req, "forward");
+  const query = parse(z.object({
+    page: z.coerce.number().int().min(1).default(1), perPage: z.coerce.number().int().min(1).max(100).default(10),
+    tab: z.enum(orderTabs).default("new"), search: z.string().max(200).default(""),
+    from: z.iso.datetime().optional(), until: z.iso.datetime().optional(),
+    payment: z.enum(["all", "prepaid", "cod"]).default("all"), warehouse: z.string().max(100).default(""),
+  }).refine(data => !data.from || !data.until || data.until >= data.from, "End date must be after start date."), req.query);
+  const search = query.search.trim().toLowerCase();
+  const records = (await localShippingOrders()).filter(record =>
+    (!search || [record.orderId, record.title, record.customer.name, record.customer.phone, record.customer.city, record.shipment?.awb].some(value => value?.toLowerCase().includes(search)))
+    && (!query.from || record.createdAt >= new Date(query.from)) && (!query.until || record.createdAt <= new Date(query.until))
+    && (query.payment === "all" || (query.payment === "cod" ? record.paymentStatus === "cod" : record.paymentStatus === "paid"))
+    && (!query.warehouse || record.warehouse?.id === query.warehouse));
+  const counts = Object.fromEntries(orderTabs.map(tab => [tab, tab === "all" ? records.length : records.filter(record => record.tab === tab).length]));
+  const filtered = records.filter(record => query.tab === "all" || record.tab === query.tab);
+  res.json({ items: filtered.slice((query.page - 1) * query.perPage, query.page * query.perPage), total: filtered.length, counts });
+});
+
+shippingRouter.post("/order-records/velocity", async (req, res) => {
+  adminPermission(req, "forward");
+  const input = parse(forwardFilterSchema, req.body);
+  const response = await velocityRequest("shipments", input, remoteListResultSchema);
+  const ids = response.data.map(record => record.id);
+  const [actions, linked] = await Promise.all([
+    prisma.velocityAssignment.findMany({ where: { shipmentId: { in: ids } }, select: { shipmentId: true, state: true, awb: true, error: true, result: true } }),
+    prisma.shippingShipment.findMany({ where: { remoteShipmentId: { in: ids } }, select: { id: true, remoteShipmentId: true, state: true } }),
+  ]);
+  res.json({ ...response, data: response.data.map(record => ({ ...record, assignment: actions.find(action => action.shipmentId === record.id) ?? null, linkedShipment: linked.find(shipment => shipment.remoteShipmentId === record.id) ?? null })) });
+});
+
+shippingRouter.post("/order-records/velocity/:id/quote", async (req, res) => {
+  adminPermission(req, "forward");
+  const input = parse(packageSchema.extend({ lookup: z.string().min(1).max(200) }).strict(), req.body);
+  res.json(await quoteRemoteOrder(param(req, "id"), input, input.lookup));
+});
+
+shippingRouter.post("/order-records/velocity/:id/ship", async (req, res) => {
+  adminPermission(req, "forward");
+  const input = parse(packageSchema.extend({ lookup: z.string().min(1).max(200), carrierId: z.string().min(1).max(100), packedDetailsConfirmed: z.literal(true) }).strict(), req.body);
+  const result = await assignRemoteOrder(param(req, "id"), input.carrierId, input, input.lookup);
+  await audit(prisma, req.adminName ?? "Admin", `Assigned existing Velocity shipment ${param(req, "id")}`);
+  res.json(result);
 });
 
 shippingRouter.post("/tracking", async (req, res) => {

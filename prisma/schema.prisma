@@ -526,6 +526,17 @@ model ShippingShipment {
   @@index([state, updatedAt])
 }
 
+model VelocityAssignment {
+  shipmentId String   @id
+  state      String
+  carrierId  String
+  awb        String?
+  result     Json?
+  error      String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
 // Every file stored in the bucket is registered here; media fields elsewhere may only point at these.
 model Upload {
   key         String   @id

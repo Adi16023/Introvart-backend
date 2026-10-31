@@ -13,6 +13,7 @@ import { cancelOrder } from "../src/services/orders";
 import { decideReturn } from "../src/services/returns";
 import { issueStaffToken } from "../src/services/staff-auth";
 import { codAllocation, forwardFilterSchema, laneRateSchema, packageSchema, rateBody, ratesSchema, returnFilterSchema, serviceabilitySchema, velocityRequest } from "../src/services/velocity";
+import { assignRemoteOrder, localShippingOrders, orderTab, quoteRemoteOrder, remoteRateBody } from "../src/services/shipping-orders";
 
 test("Velocity integration uses mocks only; no live shipping or database calls", async (t) => {
   function stub(target: object, name: string, implementation: (...args: never[]) => unknown) {
@@ -67,7 +68,19 @@ test("Velocity integration uses mocks only; no live shipping or database calls",
   const itemUpdates: Record<string, unknown>[] = [];
   const jobUpdates: Record<string, unknown>[] = [];
   const shipmentQueries: unknown[] = [];
+  const remoteAssignments = new Map<string, { shipmentId: string; state: string; carrierId: string; awb?: string; error?: string; result?: unknown }>();
+  stub(prisma.velocityAssignment, "findUnique", async ({ where }: { where: { shipmentId: string } }) => remoteAssignments.get(where.shipmentId) ?? null);
+  stub(prisma.velocityAssignment, "findMany", async () => [...remoteAssignments.values()]);
+  stub(prisma.velocityAssignment, "createMany", async ({ data }: { data: { shipmentId: string; state: string; carrierId: string }[] }) => {
+    if (remoteAssignments.has(data[0].shipmentId)) return { count: 0 };
+    remoteAssignments.set(data[0].shipmentId, { ...data[0] }); return { count: 1 };
+  });
+  stub(prisma.velocityAssignment, "update", async ({ where, data }: { where: { shipmentId: string }; data: Record<string, unknown> }) => {
+    const action = remoteAssignments.get(where.shipmentId); assert.ok(action); Object.assign(action, data); return action;
+  });
   stub(prisma.order, "findUnique", async () => order);
+  stub(prisma.orderItem, "findMany", async () => [{ ...item, order: { ...order, shipments: [...shipments.values()].filter(row => row.journey === "forward"), jobs: [{ id: "job-1", itemId: item.id, status: jobStatus }] } }]);
+  stub(prisma.productVariant, "findMany", async () => []);
   stub(prisma.order, "updateMany", async () => ({ count: 1 }));
   stub(prisma.order, "update", async ({ data }: { data: Partial<Order> }) => { Object.assign(order, data); return order; });
   stub(prisma.orderItem, "findUnique", async () => item);
@@ -91,10 +104,10 @@ test("Velocity integration uses mocks only; no live shipping or database calls",
   stub(prisma.shippingShipment, "findUniqueOrThrow", async ({ where }: { where: { id: string } }) => {
     const row = shipments.get(where.id); assert.ok(row); return row;
   });
-  stub(prisma.shippingShipment, "findFirst", async ({ where }: { where: { itemId?: string; returnCaseId?: string; journey?: string; state?: { not: string }; jobId?: string } }) =>
+  stub(prisma.shippingShipment, "findFirst", async ({ where }: { where: { itemId?: string; returnCaseId?: string; journey?: string; state?: { not: string }; jobId?: string; remoteShipmentId?: string } }) =>
     [...shipments.values()].find((row) => (!where.itemId || row.itemId === where.itemId) &&
       (!where.returnCaseId || row.returnCaseId === where.returnCaseId) && (!where.journey || row.journey === where.journey) &&
-      (!where.state || row.state !== where.state.not) && (!where.jobId || row.jobId === where.jobId)) ?? null);
+      (!where.state || row.state !== where.state.not) && (!where.jobId || row.jobId === where.jobId) && (!where.remoteShipmentId || row.remoteShipmentId === where.remoteShipmentId)) ?? null);
   stub(prisma.shippingShipment, "count", async () => [...shipments.values()].filter((row) => row.state !== "cancelled").length);
   stub(prisma.shippingShipment, "findMany", async (query: unknown) => { shipmentQueries.push(query); return [...shipments.values()]; });
   stub(prisma.shippingShipment, "create", async ({ data }: { data: Partial<ShippingShipment> & Pick<ShippingShipment, "id" | "bookingKey" | "orderId" | "itemId" | "warehouseId" | "journey" | "length" | "width" | "height" | "weightGrams" | "request"> }) => {
@@ -520,6 +533,100 @@ test("Velocity integration uses mocks only; no live shipping or database calls",
     await assert.rejects(cancelAwbs([row.awb!]), /No bulk cancellation was sent/);
     assert.deepEqual(calls.map((entry) => entry.endpoint), ["order-tracking"]);
   });
+  await t.test("order status tabs preserve delivered, attention, RTO and cancelled distinctions", () => {
+    assert.equal(orderTab("pending"), "new");
+    assert.equal(orderTab("ready_for_pickup", "booked"), "ready");
+    assert.equal(orderTab("out_for_delivery", "booked"), "transit");
+    assert.equal(orderTab("delivered", "booked"), "delivered");
+    assert.equal(orderTab("pending", "attention"), "attention");
+    assert.equal(orderTab("ready_for_pickup", "cancel_requested"), "attention");
+    assert.equal(orderTab("rto_delivered", "booked"), "rto");
+    assert.equal(orderTab("cancelled", "cancelled"), "cancelled");
+    assert.equal(orderTab("refunded", "attention"), "cancelled");
+  });
+  await t.test("local orders include customer, pickup and parcel history without leaking stored booking requests", async () => {
+    const rows = await localShippingOrders();
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].customer.phone, "9999999999");
+    assert.equal(rows[0].warehouse?.velocityId, "VELOCITY-WH");
+    assert.equal(rows[0].quantity, 2);
+    assert.ok(rows[0].shipments.every(row => !("request" in row) && !("labelKey" in row)));
+  });
+  await t.test("an unbooked replacement print job appears as new even when the original line was delivered", async () => {
+    const previousStatus = item.status;
+    const previousJob = jobStatus;
+    item.status = "delivered"; jobStatus = "ready";
+    try {
+      const rows = await localShippingOrders();
+      assert.equal(rows[0].tab, "new");
+      assert.equal(rows[0].productionStatus, "ready");
+      assert.equal(rows[0].ready, true);
+    } finally { item.status = previousStatus; jobStatus = previousJob; }
+  });
+  await t.test("external quotes use authoritative Velocity addresses and COD, not client input", async () => {
+    const attributes = { status: "new", tracking_number: null, pickup_details: { zip: "400001" }, shipping_address: { zip: "110001" }, is_cod: true, cod_amount: 1149 };
+    remote = endpoint => {
+      if (endpoint === "shipments") return { data: [{ id: "EXTERNAL-QUOTE", attributes }] };
+      if (endpoint === "rates") return rates;
+      throw new Error(`Unmocked ${endpoint}`);
+    };
+    calls.length = 0;
+    assert.equal((await quoteRemoteOrder("EXTERNAL-QUOTE", parcel, "#1005")).serviceable_couriers.length, 1);
+    assert.equal(calls[0].body.search, "#1005");
+    assert.equal(calls[1].body.origin_pincode, "400001");
+    assert.equal(calls[1].body.destination_pincode, "110001");
+    assert.equal(calls[1].body.shipment_value, 1149);
+    assert.equal(calls[1].body.dead_weight, 750);
+    assert.throws(() => remoteRateBody({ ...attributes, pickup_details: {} }, parcel), /did not provide/);
+    assert.throws(() => remoteRateBody({ ...attributes, is_cod: undefined }, parcel), /did not provide/);
+    assert.throws(() => remoteRateBody({ ...attributes, weight: { value: 1, metric_unit: "kg" } }, parcel), /weight differs/);
+    await assert.rejects(quoteRemoteOrder("OTHER-ID", parcel, "#1005"), /not found/);
+  });
+  await t.test("external assignment uses an existing shipment ID and persists a single claim across concurrent clicks", async () => {
+    remote = endpoint => {
+      if (endpoint === "shipments") return { data: [{ id: "EXTERNAL-SHIP", attributes: { status: "new", tracking_number: null, pickup_details: { zip: "400001" }, shipping_address: { zip: "110001" }, is_cod: false, cod_amount: 0 } }] };
+      if (endpoint === "rates") return rates;
+      if (endpoint === "forward-order-shipment") return { payload: { awb_code: "EXTERNAL-AWB", shipment_id: "EXTERNAL-SHIP" } };
+      throw new Error(`Unmocked ${endpoint}`);
+    };
+    calls.length = 0;
+    const results = await Promise.allSettled([assignRemoteOrder("EXTERNAL-SHIP", "carrier-1", parcel, "#1006"), assignRemoteOrder("EXTERNAL-SHIP", "carrier-1", parcel, "#1006")]);
+    assert.equal(results.filter(result => result.status === "fulfilled").length, 1);
+    const assignment = calls.filter(call => call.endpoint === "forward-order-shipment");
+    assert.equal(assignment.length, 1);
+    assert.deepEqual(assignment[0].body, { shipment_id: "EXTERNAL-SHIP", carrier_id: "carrier-1" });
+    assert.equal(remoteAssignments.get("EXTERNAL-SHIP")?.state, "booked");
+    assert.equal(remoteAssignments.get("EXTERNAL-SHIP")?.awb, "EXTERNAL-AWB");
+    await assert.rejects(assignRemoteOrder("EXTERNAL-SHIP", "carrier-1", parcel, "#1006"), /already has/);
+    assert.ok(!calls.some(call => call.endpoint === "forward-order"));
+  });
+  await t.test("uncertain external assignments remain blocked and never recreate the Velocity order", async () => {
+    remote = endpoint => {
+      if (endpoint === "shipments") return { data: [{ id: "EXTERNAL-TIMEOUT", attributes: { status: "new", tracking_number: null, pickup_details: { zip: "400001" }, shipping_address: { zip: "110001" }, is_cod: false, cod_amount: 0 } }] };
+      if (endpoint === "rates") return rates;
+      throw new Error("Simulated timeout after courier assignment");
+    };
+    await assert.rejects(assignRemoteOrder("EXTERNAL-TIMEOUT", "carrier-1", parcel, "#1007"), /did not respond/);
+    assert.equal(remoteAssignments.get("EXTERNAL-TIMEOUT")?.state, "attention");
+    calls.length = 0;
+    await assert.rejects(assignRemoteOrder("EXTERNAL-TIMEOUT", "carrier-1", parcel, "#1007"), /already has/);
+    assert.equal(calls.length, 0);
+  });
+  await t.test("external assignments reject unavailable couriers and already assigned parcels", async () => {
+    let awb: string | null = null;
+    remote = endpoint => endpoint === "rates" ? rates : { data: [{ id: "EXTERNAL-INVALID", attributes: { status: "new", tracking_number: awb, pickup_details: { zip: "400001" }, shipping_address: { zip: "110001" }, is_cod: false, cod_amount: 0 } }] };
+    await assert.rejects(assignRemoteOrder("EXTERNAL-INVALID", "not-serviceable", parcel, "#1008"), /available courier/);
+    assert.equal(remoteAssignments.has("EXTERNAL-INVALID"), false);
+    awb = "ALREADY-SHIPPED";
+    await assert.rejects(assignRemoteOrder("EXTERNAL-INVALID", "carrier-1", parcel, "#1008"), /unassigned/);
+  });
+  await t.test("linked Velocity shipments cannot bypass Introvart fulfilment safeguards", async () => {
+    const linked = [...shipments.values()].find(row => row.remoteShipmentId);
+    assert.ok(linked?.remoteShipmentId);
+    calls.length = 0;
+    await assert.rejects(assignRemoteOrder(linked.remoteShipmentId, "carrier-1", parcel, "#1009"), /belongs to Introvart/);
+    assert.equal(calls.length, 0);
+  });
   await t.test("HTTP routes reject guests, prevent creator-wide reports and restrict customer tracking ownership", async () => {
     const keys = generateKeyPairSync("rsa", { modulusLength: 2048, publicKeyEncoding: { type: "spki", format: "pem" }, privateKeyEncoding: { type: "pkcs8", format: "pem" } });
     stub(prisma.staffSigningKey, "findUnique", async () => keys);
@@ -570,6 +677,16 @@ test("Velocity integration uses mocks only; no live shipping or database calls",
       assert.equal((await post("tracking", { awbs: ["TEST-RETURN"] })).status, 200);
       assert.equal((await post("cancel", { awbs: ["TEST-RETURN"] })).status, 200);
       assert.equal((await post("reports", { start_date_time: "2026-10-01T00:00:00Z", end_date_time: "2026-10-31T23:59:59Z", shipment_type: "return" })).status, 200);
+      const localOrders = await fetch(`${base}/admin/shipping-tools/order-records?tab=all&perPage=10`, { headers: { Authorization: `Bearer ${adminToken}` } });
+      assert.equal(localOrders.status, 200);
+      const localBody = await localOrders.json();
+      assert.equal(localBody.total, 1);
+      assert.equal(localBody.counts.all, 1);
+      assert.equal(localBody.items[0].customer.phone, "9999999999");
+      const accountOrders = await post("order-records/velocity", { page: 1, per_page: 10, granular_status: ["new"] });
+      assert.equal(accountOrders.status, 200);
+      assert.equal((await accountOrders.json()).meta.total_count, 1);
+      assert.equal((await post("order-records/velocity/REMOTE-1/ship", { length: 30, width: 20, height: 5, weightGrams: 500, carrierId: "carrier-1", packedDetailsConfirmed: false })).status, 400);
       const count = calls.length;
       assert.equal((await post("remote/forward", { unrecognized: true })).status, 400);
       assert.equal((await post("tracking", { awbs: Array.from({ length: 51 }, (_, index) => String(index)) })).status, 400);
@@ -583,6 +700,10 @@ test("Velocity integration uses mocks only; no live shipping or database calls",
       assert.equal((await supportPost("remote/return")).status, 200);
       assert.equal((await supportPost("remote/forward")).status, 403);
       assert.equal((await supportPost("tracking")).status, 403);
+      assert.equal((await supportPost("order-records/velocity")).status, 403);
+      assert.equal((await supportPost("order-records/velocity/REMOTE-1/quote")).status, 403);
+      assert.equal((await supportPost("order-records/velocity/REMOTE-1/ship")).status, 403);
+      assert.equal((await fetch(`${base}/admin/shipping-tools/order-records`, { headers: { Authorization: `Bearer ${supportToken}` } })).status, 403);
     } finally { await new Promise<void>((resolve) => server.close(() => resolve())); }
   });
 });
