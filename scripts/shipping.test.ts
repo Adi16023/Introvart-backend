@@ -267,6 +267,35 @@ test("Velocity integration uses mocks only; no live shipping or database calls",
     assert.equal(shipments.size, 0);
     order.shippingBlocked = false;
   });
+  await t.test("shipping admins can book New print jobs while creator and in-progress safeguards remain", async () => {
+    remote = bookingMock; shipments.clear(); calls.length = 0;
+    jobStatus = "new";
+    try {
+      const rows = await localShippingOrders();
+      assert.equal(rows[0].ready, true);
+      assert.equal(rows[0].tab, "new");
+      await assert.rejects(bookShipment(order.id, parcel, {}), /mark this job ready/);
+      const result = await bookShipment(order.id, parcel, { allowNewOrders: true });
+      assert.equal(result.state, "booked");
+      assert.equal(result.jobId, "job-1");
+      assert.equal(jobStatus, "new");
+      assert.equal(calls.filter(call => call.endpoint === "forward-order").length, 1);
+      shipments.clear(); calls.length = 0; jobStatus = "printing";
+      await assert.rejects(bookShipment(order.id, parcel, { allowNewOrders: true }), /mark this job ready/);
+      assert.equal(calls.length, 0);
+    } finally { jobStatus = "ready"; shipments.clear(); }
+  });
+  await t.test("shipping admins can book confirmed artist orders without relaxing creator acceptance", async () => {
+    const originalStatus = item.status;
+    item.fulfilment = "original"; item.status = "confirmed";
+    remote = bookingMock; shipments.clear();
+    try {
+      await assert.rejects(bookShipment(order.id, parcel, { creatorId: "artist-1" }), /artist must accept/);
+      const result = await bookShipment(order.id, parcel, { allowNewOrders: true });
+      assert.equal(result.state, "booked");
+      assert.equal(result.jobId ?? null, null);
+    } finally { item.fulfilment = "platform_pod"; item.status = originalStatus; shipments.clear(); }
+  });
   await t.test("an unsupported carrier cannot create a shipment", async () => {
     calls.length = 0; remote = bookingMock;
     await assert.rejects(bookShipment(order.id, { ...parcel, carrierId: "unknown" }, {}), /current quote/);

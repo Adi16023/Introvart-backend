@@ -38,7 +38,7 @@ export async function localShippingOrders() {
     const status = ["cancelled", "refunded"].includes(item.status) ? item.status
       : shipment?.status ?? (job && job.status !== "dispatched" ? "pending" : item.status);
     const ready = Boolean(owner) && !order.shippingBlocked && ["paid", "cod"].includes(order.paymentStatus) && !["cancelled", "refunded", "return_requested"].includes(item.status)
-      && (PRESS_TYPES.includes(item.fulfilment) ? job?.status === "ready" : item.status === "accepted");
+      && (PRESS_TYPES.includes(item.fulfilment) ? Boolean(job && ["new", "ready"].includes(job.status)) : ["confirmed", "accepted"].includes(item.status));
     return {
       id: item.id, orderId: order.id, itemId: item.id, jobId: job?.id ?? null,
       title: item.title, quantity: item.quantity, createdAt: order.createdAt,

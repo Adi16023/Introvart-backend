@@ -33,7 +33,7 @@ export const bookingSchema = packageSchema.extend({
 }).refine((data) => !data.returnQc || Boolean(data.returnCaseId), "QC is only available for a return pickup.");
 export type BookingInput = z.infer<typeof bookingSchema>;
 type ShippingOrder = Order & { items: OrderItem[] };
-export type ShippingActor = { creatorId?: string };
+export type ShippingActor = { creatorId?: string; allowNewOrders?: boolean };
 
 const addressSchema = z.object({
   name: z.string().min(1), phone: z.string().min(10), line: z.string().min(3),
@@ -124,12 +124,12 @@ export async function bookShipment(orderId: string, input: BookingInput, actor: 
     if (!returned || returned.orderId !== orderId || returned.itemId !== item.id) throw notFound("Return case not found");
     if (returned.status !== "pickup_approved") throw conflict("Approve the physical return pickup before booking it.");
   } else if (PRESS_TYPES.includes(item.fulfilment)) {
-    if (!input.jobId) throw badRequest("Select the ready print job for this shipment.");
+    if (!input.jobId) throw badRequest("Select the print job for this shipment.");
     const job = await prisma.printJob.findUnique({ where: { id: input.jobId } });
     if (!job || job.orderId !== orderId || job.itemId !== item.id) throw notFound("Print job not found");
-    if (job.status !== "ready") throw conflict("Complete printing, QC and packing and mark this job ready before booking.");
+    if (job.status !== "ready" && !(actor.allowNewOrders && job.status === "new")) throw conflict("Complete printing, QC and packing and mark this job ready before booking.");
     jobId = job.id;
-  } else if (item.status !== "accepted") {
+  } else if (item.status !== "accepted" && !(actor.allowNewOrders && item.status === "confirmed")) {
     throw conflict("The artist must accept this order line before booking.");
   }
   if (["cancelled", "refunded", "pending_payment"].includes(item.status) || (journey === "forward" && item.status === "return_requested")) throw conflict("This line cannot be shipped.");
@@ -183,8 +183,8 @@ export async function bookShipment(orderId: string, input: BookingInput, actor: 
     } else {
       if (jobId) {
         const currentJob = await tx.printJob.findUnique({ where: { id: jobId } });
-        if (currentJob?.status !== "ready") throw conflict("Print job readiness changed. Refresh before booking.");
-      } else if (currentItem.status !== "accepted") throw conflict("Artist order acceptance changed. Refresh before booking.");
+        if (currentJob?.status !== "ready" && !(actor.allowNewOrders && currentJob?.status === "new")) throw conflict("Print job readiness changed. Refresh before booking.");
+      } else if (currentItem.status !== "accepted" && !(actor.allowNewOrders && currentItem.status === "confirmed")) throw conflict("Artist order acceptance changed. Refresh before booking.");
       if (currentItem.status === "return_requested") throw conflict("This line now has a return request.");
       if (collectible > 0 && await tx.shippingShipment.findFirst({ where: { itemId: item.id, journey: "forward", state: { not: "cancelled" } } })) {
         throw conflict("A COD shipment already exists for this line.");

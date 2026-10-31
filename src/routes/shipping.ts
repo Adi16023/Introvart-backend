@@ -187,7 +187,7 @@ shippingRouter.post("/orders/:orderId/quote", async (req, res) => {
 shippingRouter.post("/orders/:orderId/book", async (req, res) => {
   const input = parse(bookingSchema, req.body);
   permission(req, input.returnCaseId ? "return" : "forward");
-  const result = await bookShipment(param(req, "orderId"), input, actor(req));
+  const result = await bookShipment(param(req, "orderId"), input, { ...actor(req), allowNewOrders: Boolean(req.adminRole) });
   await audit(prisma, req.adminName ?? `Creator ${req.creatorId}`, `Booked Velocity ${result.journey} ${result.id}`);
   res.status(201).json(result);
 });

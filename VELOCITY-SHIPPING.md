@@ -82,8 +82,11 @@ the package already saved in Velocity: the assignment API cannot edit packages.
 When Velocity supplies an actual weight, a different entered weight is rejected.
 Linked Introvart shipments must use the Introvart view and its existing booking/
 assignment safeguards. Local rows summarize the latest production parcel per
-order line; historical parcels remain available in details. Introvart bookings
-preserve readiness, COD allocation, cancellation locks and existing customer prices.
+order line; historical parcels remain available in details. Introvart bookings preserve COD allocation, cancellation locks and existing
+customer prices. Verified shipping admins can also book New print jobs and
+confirmed artist lines after supplying positive packed dimensions and weight.
+Creator bookings still require acceptance; in-progress print jobs still require
+Ready. Booking does not advance production status or confirm physical handover.
 Status counts use local filtered records or Velocity's list `meta.total`, not
 guessed counts. Missing remote totals are explicitly reported. Courier ordering
 preserves Velocity's response; no recommendation score or rating is fabricated.
@@ -103,7 +106,9 @@ internal estimates, not an additional customer charge.
 
 1. Configure a pickup warehouse for each physical origin.
 2. Finish printing, QC and packing and mark platform jobs `ready`. Artists accept
-   their seller-fulfilled/original order lines in Creator > Orders.
+   their seller-fulfilled/original order lines in Creator > Orders. Shipping
+   admins may alternatively book New jobs or confirmed artist lines directly;
+   enter the actual packed measurements and confirm the pickup explicitly.
 3. In Shipping, select a line/job and enter the actual packed length, width and
    height in centimetres and total packed weight in grams, including packaging.
    One shipment covers the entire quantity on that line/job as one parcel.
