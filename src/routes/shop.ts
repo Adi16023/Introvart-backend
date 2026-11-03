@@ -22,8 +22,14 @@ import {
   saveCustomerAddressIfMissing,
 } from "../services/customer-addresses";
 import type { ProductVariant } from "@prisma/client";
+import { loadStorefrontSession } from "../services/storefront";
 
 export const shopRouter = Router();
+
+shopRouter.get("/storefront/session", needOwner, async (req, res) => {
+  res.set("Cache-Control", "private, no-store");
+  res.json(await loadStorefrontSession(req.ownerId!, req.customerId));
+});
 
 const phone = z.string().regex(/^[0-9+\-\s]{10,15}$/, "Enter a valid mobile number");
 

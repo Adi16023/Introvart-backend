@@ -21,6 +21,7 @@
     "test:auth": "tsx --test scripts/auth.test.ts scripts/artist-registration.test.ts",
     "test:products": "tsx --test scripts/products.test.ts",
     "test:shipping": "tsx --test scripts/shipping.test.ts",
+    "test:storefront": "tsx --test scripts/storefront.test.ts",
     "test:products:db": "tsx --test scripts/products.integration.test.ts",
     "products:import": "tsx scripts/import-products.ts"
   },

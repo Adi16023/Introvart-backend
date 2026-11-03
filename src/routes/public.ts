@@ -13,8 +13,15 @@ import { balanceOf, issueGiftCard } from "../services/giftcards";
 import { fromPrice, loadConfig, pincodeInfo, unitPrice } from "../services/pricing";
 import { productInclude } from "../services/products";
 import { selectedVariant } from "../services/product-variants";
+import { loadStorefrontHome } from "../services/storefront";
 
 export const publicRouter = Router();
+
+publicRouter.get("/storefront/home", async (_req, res) => {
+  const home = await loadStorefrontHome();
+  // The process cache owns the TTL; do not extend stale data with another browser/CDN TTL.
+  res.set("Cache-Control", "public, max-age=0, must-revalidate").json(home);
+});
 
 const bool = z.preprocess((value) => value === true || value === "true" || value === "1", z.boolean());
 

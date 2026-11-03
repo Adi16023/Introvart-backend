@@ -1,4 +1,6 @@
 // End-to-end smoke test against a running API. Usage: npm run dev (or start), then npm run smoke
+// Storefront startup uses /storefront/home (public, shared 60-second process cache)
+// and /storefront/session (private, no-store); account data stays on its page-specific endpoints.
 import "dotenv/config";
 import { randomBytes } from "node:crypto";
 import { StaffRole } from "@prisma/client";
@@ -85,6 +87,11 @@ async function main() {
   check("config has sizes", cfg.data.sizes?.length >= 4, cfg.data);
   const home = await call("GET", "/home");
   check("home has banners and trending", home.data.banners?.length > 0 && home.data.trending?.length > 0, home.status);
+  const storefront = await call("GET", "/storefront/home");
+  check("storefront bootstrap is bounded and includes header settings", storefront.status === 200 && storefront.data.trending?.length <= 8 && storefront.data.newest?.length <= 8 && Boolean(storefront.data.menu && storefront.data.searchSettings));
+  expectStatus("storefront session needs identity", await call("GET", "/storefront/session"), 400);
+  const guestSummary = await call("GET", "/storefront/session", { guest: `storefront-${fixtureRun}` });
+  check("storefront guest session is separate from public content", guestSummary.status === 200 && guestSummary.data.customer === null && guestSummary.data.cartCount === 0);
   const list = await call("GET", "/products?limit=100");
   check("listing excludes drafts", list.data.items.every((a: any) => a.status === "approved"), list.status);
   const jasmine = await call("GET", "/search?q=jasmin&log=false");
