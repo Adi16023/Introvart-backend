@@ -37,3 +37,10 @@ export async function resolveMedia(req: Request, refs: string[], kinds: MediaKin
 export async function resolveOne(req: Request, ref: string, kinds: MediaKind[], field = "image") {
   return (await resolveMedia(req, [ref], kinds, field))[0];
 }
+
+export async function resolveCmsImage(req: Request, ref: string, field: string) {
+  if (!ref) return "";
+  if (keyFromRef(ref)) return resolveOne(req, ref, ["cms"], field);
+  if (/^\/(?!\/)/.test(ref) && !/[\\\u0000-\u0020]/.test(ref)) return ref;
+  throw badRequest(`${field} must be an uploaded image or a site path`);
+}

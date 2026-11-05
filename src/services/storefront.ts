@@ -8,6 +8,7 @@ import { productImageSchema } from "./products";
 import { loadSearchSettings } from "./searchSettings";
 import { loadPaymentSettings } from "./paymentSettings";
 import { cashfreeConfigured } from "./cashfree";
+import { loadHomepage, type HomepageConfig } from "./homepage";
 
 const cardSelect = {
   id: true, slug: true, title: true, image: true, images: true,
@@ -45,7 +46,9 @@ async function buildStorefrontHome() {
     loadSearchSettings(),
     loadPaymentSettings(),
   ]);
-  const rooms = settings.rooms.slice(0, 6);
+  const { published: homepage } = await loadHomepage(banners);
+  const roomLimit = Math.max(6, ...homepage.sections.filter((section) => section.enabled && section.type === "rooms").map((section) => section.limit));
+  const rooms = settings.rooms.slice(0, roomLimit);
   const roomRows = rooms.length ? await prisma.$queryRaw<{ name: string; count: number; image: string }[]>(Prisma.sql`
     SELECT room.name, COUNT(DISTINCT p.id)::integer AS count,
       MIN(COALESCE(NULLIF(p."roomImage", ''), p.image)) AS image
@@ -57,6 +60,7 @@ async function buildStorefrontHome() {
     GROUP BY room.name
   `) : [];
   const { capacity: _capacity, holidays: _holidays, colours, rooms: allRooms, partnerName, ...config } = settings;
+  const content = await loadHomepageContent(homepage, settings);
   return {
     config: { ...config, codEnabled: payments.codEnabled, onlinePayments: cashfreeConfigured() },
     colours, rooms: allRooms, partnerName,
@@ -67,21 +71,67 @@ async function buildStorefrontHome() {
     trending: trending.map((product) => card(config, product)),
     newest: newest.map((product) => card(config, product)),
     roomHighlights: rooms.map((name) => roomRows.find((room) => room.name === name) ?? { name, count: 0, image: "" }),
-    menu, announcement, searchSettings,
+    menu, announcement, searchSettings, homepage, ...content,
   };
+}
+
+export async function loadHomepageContent(homepage: HomepageConfig, config?: PricingConfig) {
+  const pricing = config ?? await loadConfig();
+  const sectionProducts: Record<string, ReturnType<typeof card>[]> = {};
+  const sectionArtists: Record<string, { id: string; slug: string; name: string; city: string; portrait: string }[]> = {};
+  await Promise.all(homepage.sections.filter((section) => section.enabled).map(async (section) => {
+    if (section.type === "products" && (["selected", "collection"].includes(section.source) || section.limit > 8)) {
+      if (section.source === "trending" || section.source === "newest") {
+        const products = await prisma.product.findMany({
+          where: visibleProducts, orderBy: section.source === "newest" ? [{ createdAt: "desc" }, { id: "asc" }] : [{ reviewCount: "desc" }, { id: "asc" }],
+          select: cardSelect, take: section.limit,
+        });
+        sectionProducts[section.id] = products.map((product) => card(pricing, product));
+        return;
+      }
+      const ids = section.source === "collection"
+        ? (await prisma.collection.findUnique({ where: { slug: section.collectionSlug }, select: { ids: true } }))?.ids ?? []
+        : section.selection;
+      const products = ids.length ? await prisma.product.findMany({
+        where: { ...visibleProducts, id: { in: ids } }, select: cardSelect,
+      }) : [];
+      sectionProducts[section.id] = ids.flatMap((id) => {
+        const product = products.find((entry) => entry.id === id);
+        return product ? [card(pricing, product)] : [];
+      }).slice(0, section.limit);
+    }
+    if (section.type === "artists" && (section.selection.length || section.limit > 6)) {
+      const artists = await prisma.artist.findMany({
+        where: { ...(section.selection.length ? { id: { in: section.selection } } : {}), verified: true, suspended: false },
+        orderBy: { name: "asc" }, take: section.selection.length ? undefined : section.limit,
+        select: { id: true, slug: true, name: true, city: true, portrait: true },
+      });
+      sectionArtists[section.id] = (section.selection.length ? section.selection.flatMap((id) => artists.filter((artist) => artist.id === id)) : artists).slice(0, section.limit);
+    }
+  }));
+  return { sectionProducts, sectionArtists };
 }
 
 const CACHE_MS = 60_000;
 let cached: { data: Awaited<ReturnType<typeof buildStorefrontHome>>; expiresAt: number } | undefined;
 let pending: Promise<Awaited<ReturnType<typeof buildStorefrontHome>>> | undefined;
+let generation = 0;
+
+export function invalidateStorefrontHome() {
+  generation += 1;
+  cached = undefined;
+  pending = undefined;
+}
 
 export async function loadStorefrontHome() {
   if (cached && cached.expiresAt > Date.now()) return cached.data;
   if (!pending) {
-    pending = buildStorefrontHome().then((data) => {
-      cached = { data, expiresAt: Date.now() + CACHE_MS };
+    const started = generation;
+    const build = buildStorefrontHome().then((data) => {
+      if (started === generation) cached = { data, expiresAt: Date.now() + CACHE_MS };
       return data;
-    }).finally(() => { pending = undefined; });
+    }).finally(() => { if (pending === build) pending = undefined; });
+    pending = build;
   }
   return pending;
 }

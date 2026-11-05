@@ -3,7 +3,7 @@ import { z } from "zod";
 import { prisma } from "../lib/db";
 import { badRequest, conflict, notFound, param, parse, slugify, uid } from "../lib/http";
 import { actorLabel, needAdmin, roleMatrix, staffGate } from "../lib/identity";
-import { resolveOne } from "../lib/media";
+import { resolveCmsImage, resolveOne } from "../lib/media";
 import { canonicalMediaUrl } from "../lib/storage";
 import { audit } from "../services/audit";
 import { loadMenu, menuSchema, saveMenu } from "../services/menu";
@@ -13,11 +13,40 @@ import { loadSearchSettings, saveSearchSettings, searchSettingsSchema } from "..
 import { commissions } from "../services/commissions";
 import { issueGiftCard } from "../services/giftcards";
 import { grossMerchandiseValue } from "./admin";
+import { homepageSchema, homepageWriteSchema, loadHomepage, saveHomepage } from "../services/homepage";
+import { invalidateStorefrontHome, loadHomepageContent } from "../services/storefront";
 
 export const adminContentRouter = Router();
 adminContentRouter.use(staffGate);
 
 // ───────── CMS ─────────
+
+adminContentRouter.get("/cms/homepage", needAdmin("cms"), async (_req, res) => {
+  res.set("Cache-Control", "private, no-store").json(await loadHomepage());
+});
+
+adminContentRouter.post("/cms/homepage/preview", needAdmin("cms"), async (req, res) => {
+  res.set("Cache-Control", "private, no-store").json(await loadHomepageContent(parse(homepageSchema, req.body)));
+});
+
+for (const action of ["draft", "publish"] as const) {
+  adminContentRouter.put(`/cms/homepage/${action}`, needAdmin("cms"), async (req, res) => {
+    const { config, revision } = parse(homepageWriteSchema, req.body);
+    const previous = await loadHomepage();
+    const existingImages = new Set([previous.draft, previous.published].flatMap((layout) =>
+      layout.sections.flatMap((section) => section.cards.flatMap((card) => [card.image, card.mobileImage]))));
+    for (const section of config.sections) {
+      for (const card of section.cards) {
+        if (!existingImages.has(card.image)) card.image = await resolveCmsImage(req, card.image, "Homepage image");
+        if (!existingImages.has(card.mobileImage)) card.mobileImage = await resolveCmsImage(req, card.mobileImage, "Homepage mobile image");
+      }
+    }
+    const saved = await saveHomepage(config, revision, action === "publish");
+    if (action === "publish") invalidateStorefrontHome();
+    await audit(prisma, actorLabel(req), action === "publish" ? "Published homepage" : "Saved homepage draft");
+    res.set("Cache-Control", "private, no-store").json(saved);
+  });
+}
 
 const bannerBody = z.object({
   eyebrow: z.string().max(60).default(""),

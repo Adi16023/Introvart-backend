@@ -1,9 +1,8 @@
 import type { Request } from "express";
 import { z } from "zod";
 import { json, prisma } from "../lib/db";
-import { badRequest } from "../lib/http";
-import { resolveOne } from "../lib/media";
-import { canonicalMediaUrl, keyFromRef } from "../lib/storage";
+import { resolveCmsImage } from "../lib/media";
+import { canonicalMediaUrl } from "../lib/storage";
 
 const tabIds = ["shop", "collections", "help"] as const;
 const categoryIds = ["new-arrivals", "featured", "artwork-gifts", "all-artwork"] as const;
@@ -120,18 +119,10 @@ export async function loadMenu(): Promise<MenuConfig> {
   return mapImages(parsed.success ? parsed.data : DEFAULT_MENU, (ref) => (ref ? canonicalMediaUrl(ref) : ""));
 }
 
-// Menu images are either files uploaded through POST /uploads?kind=cms or static assets served by the storefront.
-async function resolveImage(req: Request, ref: string, field: string) {
-  if (!ref) return "";
-  if (keyFromRef(ref)) return resolveOne(req, ref, ["cms"], field);
-  if (/^\/(?!\/)/.test(ref)) return ref;
-  throw badRequest(`${field} must be an uploaded image or a site path`);
-}
-
 export async function saveMenu(req: Request, input: MenuConfig): Promise<MenuConfig> {
-  const shopBanners = await Promise.all(input.shop.banners.map(async (banner) => ({ ...banner, image: await resolveImage(req, banner.image, "Shop banner image") })));
-  const collectionBanners = await Promise.all(input.collections.banners.map(async (banner) => ({ ...banner, image: await resolveImage(req, banner.image, "Collections banner image") })));
-  const tiles = await Promise.all(input.help.tiles.map(async (tile) => ({ ...tile, image: await resolveImage(req, tile.image, "Help tile image") })));
+  const shopBanners = await Promise.all(input.shop.banners.map(async (banner) => ({ ...banner, image: await resolveCmsImage(req, banner.image, "Shop banner image") })));
+  const collectionBanners = await Promise.all(input.collections.banners.map(async (banner) => ({ ...banner, image: await resolveCmsImage(req, banner.image, "Collections banner image") })));
+  const tiles = await Promise.all(input.help.tiles.map(async (tile) => ({ ...tile, image: await resolveCmsImage(req, tile.image, "Help tile image") })));
   const data: MenuConfig = {
     ...input,
     shop: { ...input.shop, banners: shopBanners },
