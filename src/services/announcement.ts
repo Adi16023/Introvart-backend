@@ -34,7 +34,7 @@ async function defaultAnnouncement(): Promise<Announcement> {
     enabled: true,
     speed: "normal",
     pauseOnHover: true,
-    background: "#e10600",
+    background: "#d14327",
     textColor: "#ffffff",
     messages: text ? [{ id: "free-shipping", text, href: "" }] : [],
   };

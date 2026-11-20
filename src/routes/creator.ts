@@ -107,8 +107,18 @@ const productBody = z.object({
   specs: z.array(z.object({
     name: z.string().trim().min(1).max(80),
     options: z.array(z.string().trim().min(1).max(120)).max(50).default([]),
-    value: z.string().trim().max(120).default(""),
+    value: z.string().trim().max(500).default(""),
+    icon: z.enum([
+      "material", "medium", "orientation", "frame", "finish", "size",
+      "tag", "layers", "palette", "ruler", "droplet", "sun",
+      "package", "sparkle", "grid", "star", "leaf", "shield",
+    ]).optional(),
   })).max(30).optional(),
+  faqs: z.array(z.object({
+    question: z.string().trim().min(1).max(200),
+    answer: z.string().trim().min(1).max(2000),
+  })).max(20).default([]),
+  returnable: z.boolean().default(true),
   category: z.string().min(1).max(60).default("Abstract"),
   fulfilment: z.enum(["platform_pod", "original", "personalized", "seller_fulfilled"]).default("platform_pod"),
   basePrice: z.coerce.number().int().min(1).max(10000000),
@@ -153,6 +163,8 @@ async function createProduct(artistId: string, body: z.infer<typeof productBody>
       story,
       descriptionHtml,
       specs: json(specs),
+      faqs: json(body.faqs),
+      returnable: body.returnable,
       image: body.image,
       roomImage: body.roomImage ?? body.image,
       category: body.category,
@@ -189,13 +201,13 @@ async function ownProduct(req: { creatorId?: string }, id: string) {
   return product;
 }
 
-const CONTENT_FIELDS = ["title", "story", "descriptionHtml", "specs", "image", "roomImage", "category", "style", "colours", "rooms", "occasions", "personalization"] as const;
+const CONTENT_FIELDS = ["title", "story", "descriptionHtml", "specs", "faqs", "returnable", "image", "roomImage", "category", "style", "colours", "rooms", "occasions", "personalization"] as const;
 
 creatorRouter.patch("/products/:id", async (req, res) => {
   const product = await ownProduct(req, param(req, "id"));
   if (product.status === "suspended" || product.status === "rejected") throw forbidden(`A ${product.status} work cannot be edited`);
   const body = parse(productBody.omit({ fulfilment: true, rightsDeclared: true, submit: true, stock: true }).partial(), req.body);
-  const { personalization, descriptionHtml, specs, story, ...rest } = body;
+  const { personalization, descriptionHtml, specs, faqs, returnable, story, ...rest } = body;
   if (rest.image) rest.image = await resolveOne(req, rest.image, ["product"]);
   if (rest.roomImage) rest.roomImage = await resolveOne(req, rest.roomImage, ["product"], "roomImage");
   const touchesContent = CONTENT_FIELDS.some((field) => (body as Record<string, unknown>)[field] !== undefined);
@@ -213,12 +225,16 @@ creatorRouter.patch("/products/:id", async (req, res) => {
     });
     nextSpecs = { specs: json(normalized) };
   }
+  const nextFaqs = faqs !== undefined ? { faqs: json(faqs) } : {};
+  const nextReturnable = returnable !== undefined ? { returnable } : {};
   const updated = await prisma.product.update({
     where: { id: product.id },
     data: {
       ...rest,
       ...nextDescription,
       ...nextSpecs,
+      ...nextFaqs,
+      ...nextReturnable,
       ...(personalization ? { personalization: json(personalization) } : {}),
       // Edits to a live listing go back through moderation.
       ...(product.status === "approved" && touchesContent ? { status: "submitted", moderatorNote: null } : {}),

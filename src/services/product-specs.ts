@@ -12,16 +12,24 @@ export const SUGGESTED_SPECS = [
 
 export const DEFAULT_MATERIAL_OPTIONS = ["Canvas", "Paper", "Wood", "Metal", "Acrylic", "Other"];
 
+const specIconId = z.enum([
+  "material", "medium", "orientation", "frame", "finish", "size",
+  "tag", "layers", "palette", "ruler", "droplet", "sun",
+  "package", "sparkle", "grid", "star", "leaf", "shield",
+]);
+
 export const productSpecSchema = z.object({
   name: z.string().trim().min(1).max(80),
   options: z.array(z.string().trim().min(1).max(120)).max(50).default([]),
   // Joined multi-select values (e.g. "Matte · Gloss") need more room than a single label.
   value: z.string().trim().max(500).default(""),
+  icon: specIconId.optional(),
 });
 
 export const productSpecTemplateSchema = z.object({
   name: z.string().trim().min(1).max(80),
   options: z.array(z.string().trim().min(1).max(120)).max(50).default([]),
+  icon: specIconId.optional(),
 });
 
 export const productSpecsArraySchema = z.array(productSpecSchema).max(30).default([]);
@@ -30,8 +38,21 @@ export const productSpecTemplateArraySchema = z.array(productSpecTemplateSchema)
 export type ProductSpec = z.infer<typeof productSpecSchema>;
 export type ProductSpecTemplate = z.infer<typeof productSpecTemplateSchema>;
 
+const DEFAULT_ICON_BY_NAME: Record<string, z.infer<typeof specIconId>> = {
+  material: "material",
+  medium: "medium",
+  orientation: "orientation",
+  frame: "frame",
+  finish: "finish",
+  size: "size",
+};
+
+function iconForSpec(name: string, icon?: z.infer<typeof specIconId>) {
+  return icon ?? DEFAULT_ICON_BY_NAME[name.trim().toLowerCase()] ?? "tag";
+}
+
 export function defaultProductSpecs(): ProductSpec[] {
-  return [{ name: DEFAULT_SPEC_NAME, options: [...DEFAULT_MATERIAL_OPTIONS], value: "" }];
+  return [{ name: DEFAULT_SPEC_NAME, options: [...DEFAULT_MATERIAL_OPTIONS], value: "", icon: "material" }];
 }
 
 export function normalizeSpecs(input: unknown): ProductSpec[] {
@@ -42,8 +63,9 @@ export function normalizeSpecs(input: unknown): ProductSpec[] {
     const key = spec.name.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
+    const name = spec.name.trim();
     const options = [...new Set(spec.options.map((option) => option.trim()).filter(Boolean))];
-    specs.push({ name: spec.name.trim(), options, value: spec.value.trim() });
+    specs.push({ name, options, value: spec.value.trim(), icon: iconForSpec(name, spec.icon) });
   }
   if (!specs.some((spec) => spec.name.toLowerCase() === DEFAULT_SPEC_NAME.toLowerCase())) {
     specs.unshift(...defaultProductSpecs());
@@ -60,16 +82,22 @@ export function normalizeVariantSpecs(input: unknown): ProductSpec[] {
     const key = spec.name.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
+    const name = spec.name.trim();
     const options = [...new Set(spec.options.map((option) => option.trim()).filter(Boolean))];
     const value = spec.value.trim() || options.join(" · ");
     if (!options.length && !value) continue;
-    specs.push({ name: spec.name.trim(), options: options.length ? options : value.split(/\s*[·,]\s*/).map((entry) => entry.trim()).filter(Boolean), value });
+    specs.push({
+      name,
+      options: options.length ? options : value.split(/\s*[·,]\s*/).map((entry) => entry.trim()).filter(Boolean),
+      value,
+      icon: iconForSpec(name, spec.icon),
+    });
   }
   return specs;
 }
 
 export function schemaFromSpecs(specs: ProductSpec[]): ProductSpecTemplate[] {
-  return specs.map(({ name, options }) => ({ name, options: [...options] }));
+  return specs.map(({ name, options, icon }) => ({ name, options: [...options], icon: iconForSpec(name, icon) }));
 }
 
 export function specsFromTemplate(template: unknown): ProductSpec[] {

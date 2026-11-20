@@ -63,6 +63,11 @@ export const productSchema = z.object({
   googleShopping: z.record(z.string(), z.string()).default({}),
   sourceRows: z.array(z.record(z.string(), z.string())).max(1000).default([]),
   specs: z.array(productSpecSchema).max(30).default([]),
+  faqs: z.array(z.object({
+    question: z.string().trim().min(1).max(200),
+    answer: z.string().trim().min(1).max(2000),
+  })).max(20).default([]),
+  returnable: z.boolean().default(true),
 }).superRefine((product, context) => {
   if (product.published && product.catalogStatus === "active" && !product.images.length) {
     context.addIssue({ code: "custom", path: ["images"], message: "An active published product needs at least one image" });
@@ -144,6 +149,7 @@ function productData(input: ProductInput, artistId: string, specs: ProductSpec[]
   return {
     id: uid("PROD"), slug: input.handle, title: input.title, artistId,
     vendor: input.vendor || "Introvart", descriptionHtml, story: plainDescription(descriptionHtml), specs: json(specs),
+    faqs: json(input.faqs), returnable: input.returnable,
     image: [...input.images].sort((a, b) => a.position - b.position)[0]?.src ?? "",
     category: input.category, productType: input.productType, tags: input.tags,
     published: input.published, catalogStatus: input.catalogStatus,
