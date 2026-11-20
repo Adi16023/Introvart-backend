@@ -9,6 +9,8 @@ import { audit } from "../services/audit";
 import { commissions } from "../services/commissions";
 import { ledgerFor } from "../services/earnings";
 import { behanceUrl, portfolioUrl, registerArtist, registrationLimit } from "../services/artist-registration";
+import { plainDescription } from "../services/products";
+import { normalizeSpecs, sanitizeDescriptionHtml, schemaFromSpecs, defaultProductSpecs } from "../services/product-specs";
 
 export const creatorRouter = Router();
 
@@ -100,7 +102,13 @@ creatorRouter.get("/dashboard", async (req, res) => {
 
 const productBody = z.object({
   title: z.string().min(2).max(120),
-  story: z.string().min(1).max(3000),
+  story: z.string().max(3000).optional(),
+  descriptionHtml: z.string().max(100_000).optional(),
+  specs: z.array(z.object({
+    name: z.string().trim().min(1).max(80),
+    options: z.array(z.string().trim().min(1).max(120)).max(50).default([]),
+    value: z.string().trim().max(120).default(""),
+  })).max(30).optional(),
   category: z.string().min(1).max(60).default("Abstract"),
   fulfilment: z.enum(["platform_pod", "original", "personalized", "seller_fulfilled"]).default("platform_pod"),
   basePrice: z.coerce.number().int().min(1).max(10000000),
@@ -128,13 +136,23 @@ async function createProduct(artistId: string, body: z.infer<typeof productBody>
   const tags = new Set(body.tags);
   if (body.rightsDeclared) tags.add("rights-declared");
   const canSubmit = body.submit && body.rightsDeclared;
+  const descriptionHtml = sanitizeDescriptionHtml(body.descriptionHtml || body.story || "");
+  const story = plainDescription(descriptionHtml) || (body.story || "").trim();
+  if (!story) throw badRequest("Add a product description");
+  const specs = normalizeSpecs(body.specs ?? defaultProductSpecs());
+  await prisma.artist.update({
+    where: { id: artistId },
+    data: { productSpecSchema: json(schemaFromSpecs(specs)) },
+  });
   return prisma.product.create({
     data: {
       id: uid("AW"),
       slug,
       title: body.title,
       artistId,
-      story: body.story,
+      story,
+      descriptionHtml,
+      specs: json(specs),
       image: body.image,
       roomImage: body.roomImage ?? body.image,
       category: body.category,
@@ -171,20 +189,36 @@ async function ownProduct(req: { creatorId?: string }, id: string) {
   return product;
 }
 
-const CONTENT_FIELDS = ["title", "story", "image", "roomImage", "category", "style", "colours", "rooms", "occasions", "personalization"] as const;
+const CONTENT_FIELDS = ["title", "story", "descriptionHtml", "specs", "image", "roomImage", "category", "style", "colours", "rooms", "occasions", "personalization"] as const;
 
 creatorRouter.patch("/products/:id", async (req, res) => {
   const product = await ownProduct(req, param(req, "id"));
   if (product.status === "suspended" || product.status === "rejected") throw forbidden(`A ${product.status} work cannot be edited`);
   const body = parse(productBody.omit({ fulfilment: true, rightsDeclared: true, submit: true, stock: true }).partial(), req.body);
-  const { personalization, ...rest } = body;
+  const { personalization, descriptionHtml, specs, story, ...rest } = body;
   if (rest.image) rest.image = await resolveOne(req, rest.image, ["product"]);
   if (rest.roomImage) rest.roomImage = await resolveOne(req, rest.roomImage, ["product"], "roomImage");
   const touchesContent = CONTENT_FIELDS.some((field) => (body as Record<string, unknown>)[field] !== undefined);
+  let nextDescription: { descriptionHtml?: string; story?: string } = {};
+  if (descriptionHtml !== undefined || story !== undefined) {
+    const html = sanitizeDescriptionHtml(descriptionHtml ?? story ?? product.descriptionHtml ?? "");
+    nextDescription = { descriptionHtml: html, story: plainDescription(html) || story || product.story };
+  }
+  let nextSpecs = {};
+  if (specs !== undefined) {
+    const normalized = normalizeSpecs(specs);
+    await prisma.artist.update({
+      where: { id: req.creatorId! },
+      data: { productSpecSchema: json(schemaFromSpecs(normalized)) },
+    });
+    nextSpecs = { specs: json(normalized) };
+  }
   const updated = await prisma.product.update({
     where: { id: product.id },
     data: {
       ...rest,
+      ...nextDescription,
+      ...nextSpecs,
       ...(personalization ? { personalization: json(personalization) } : {}),
       // Edits to a live listing go back through moderation.
       ...(product.status === "approved" && touchesContent ? { status: "submitted", moderatorNote: null } : {}),

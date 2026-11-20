@@ -73,6 +73,7 @@ model Artist {
   phone             String?
   suspended         Boolean   @default(false)
   boostedUntil      DateTime?
+  productSpecSchema Json      @default("[]")
   createdAt         DateTime  @default(now())
 
   products    Product[]
@@ -140,6 +141,7 @@ model Product {
   googleShopping  Json     @default("{}")
   sourceRows      Json     @default("[]")
   images          Json     @default("[]")
+  specs           Json     @default("[]")
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 

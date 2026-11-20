@@ -3,6 +3,7 @@ import type { Prisma } from "@prisma/client";
 import { json, prisma, transaction, type Tx } from "../lib/db";
 import { badRequest, conflict, uid } from "../lib/http";
 import { audit } from "./audit";
+import { normalizeSpecs, sanitizeDescriptionHtml, schemaFromSpecs, type ProductSpec } from "./product-specs";
 
 const money = z.number().finite().min(0).max(10_000_000).refine((value) => Math.abs(value * 100 - Math.round(value * 100)) < 0.00001, "Use at most two decimal places");
 const imageUrl = z.string().url().max(2048).refine((value) => value.startsWith("https://"), "Use an HTTPS image URL");
@@ -60,6 +61,11 @@ export const productSchema = z.object({
   metafields: z.record(z.string(), z.string()).default({}),
   googleShopping: z.record(z.string(), z.string()).default({}),
   sourceRows: z.array(z.record(z.string(), z.string())).max(1000).default([]),
+  specs: z.array(z.object({
+    name: z.string().trim().min(1).max(80),
+    options: z.array(z.string().trim().min(1).max(120)).max(50).default([]),
+    value: z.string().trim().max(120).default(""),
+  })).max(30).default([]),
 }).superRefine((product, context) => {
   if (product.published && product.catalogStatus === "active" && !product.images.length) {
     context.addIssue({ code: "custom", path: ["images"], message: "An active published product needs at least one image" });
@@ -118,11 +124,19 @@ async function productArtist(tx: Tx, input: ProductInput, vendors = new Map<stri
   return artistId;
 }
 
-function productData(input: ProductInput, artistId: string): Prisma.ProductCreateManyInput {
+async function rememberArtistSpecSchema(tx: Tx, artistId: string, specs: ProductSpec[]) {
+  await tx.artist.update({
+    where: { id: artistId },
+    data: { productSpecSchema: json(schemaFromSpecs(specs)) },
+  });
+}
+
+function productData(input: ProductInput, artistId: string, specs: ProductSpec[]): Prisma.ProductCreateManyInput {
   const orientation = input.metafields["Orientation (product.metafields.shopify.orientation)"]?.toLowerCase();
+  const descriptionHtml = sanitizeDescriptionHtml(input.descriptionHtml);
   return {
     id: uid("PROD"), slug: input.handle, title: input.title, artistId,
-    vendor: input.vendor || "Introvart", descriptionHtml: input.descriptionHtml, story: plainDescription(input.descriptionHtml),
+    vendor: input.vendor || "Introvart", descriptionHtml, story: plainDescription(descriptionHtml), specs: json(specs),
     image: [...input.images].sort((a, b) => a.position - b.position)[0]?.src ?? "",
     category: input.category, productType: input.productType, tags: input.tags,
     published: input.published, catalogStatus: input.catalogStatus,
@@ -139,9 +153,11 @@ function productData(input: ProductInput, artistId: string): Prisma.ProductCreat
 
 async function insertProduct(tx: Tx, input: ProductInput) {
   const artistId = await productArtist(tx, input);
+  const specs = normalizeSpecs(input.specs);
+  await rememberArtistSpecSchema(tx, artistId, specs);
   return tx.product.create({
     data: {
-      ...productData(input, artistId),
+      ...productData(input, artistId, specs),
       variants: { create: input.variants.map(({ id: _variantId, ...variant }, sort) => ({ ...variant, unitPriceMeasure: json(variant.unitPriceMeasure), sort })) },
     },
     include: productInclude,
@@ -169,7 +185,9 @@ export async function updateProduct(id: string, input: ProductInput, actor: stri
     }
 
     const artistId = await productArtist(tx, input);
-    const row = productData(input, artistId);
+    const specs = normalizeSpecs(input.specs);
+    await rememberArtistSpecSchema(tx, artistId, specs);
+    const row = productData(input, artistId, specs);
     const { id: _productId, rooms: _rooms, occasions: _occasions, orientation: _orientation, colours: _colours, ...productFields } = row;
     await tx.product.update({ where: { id }, data: productFields });
 
@@ -217,7 +235,9 @@ export async function importProducts(products: ProductInput[], actor: string, re
     const vendors = new Map<string, string>();
     for (const product of products) {
       const artistId = await productArtist(tx, product, vendors);
-      const row = productData(product, artistId);
+      const specs = normalizeSpecs(product.specs);
+      await rememberArtistSpecSchema(tx, artistId, specs);
+      const row = productData(product, artistId, specs);
       productRows.push(row);
       variantRows.push(...product.variants.map((variant, sort) => ({
         ...variant, productId: row.id, unitPriceMeasure: json(variant.unitPriceMeasure), sort,

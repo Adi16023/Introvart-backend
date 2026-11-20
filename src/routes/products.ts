@@ -6,6 +6,7 @@ import { badRequest, parse } from "../lib/http";
 import { actorLabel, needAdmin, staffGate } from "../lib/identity";
 import { createProduct, importProducts, productInclude, productSchema, updateProduct } from "../services/products";
 import { csvSummary, readProductCsv } from "../services/product-csv";
+import { defaultProductSpecs, specsFromTemplate } from "../services/product-specs";
 
 export const productsRouter = Router();
 productsRouter.use(staffGate, needAdmin("catalogue"));
@@ -22,6 +23,29 @@ productsRouter.get("/", async (req, res) => {
     prisma.product.findMany({ where, include: productInclude, orderBy: { createdAt: "desc" }, skip: (query.page - 1) * query.limit, take: query.limit }),
   ]);
   res.json({ total, page: query.page, limit: query.limit, items });
+});
+
+
+productsRouter.get("/spec-schema", async (req, res) => {
+  const query = parse(z.object({
+    vendor: z.string().trim().max(200).default(""),
+    artistId: z.string().trim().max(200).default(""),
+  }), req.query);
+  let artist = null;
+  if (query.artistId) {
+    artist = await prisma.artist.findUnique({ where: { id: query.artistId }, select: { productSpecSchema: true } });
+  } else if (query.vendor) {
+    const slug = `vendor-${Buffer.from(query.vendor.toLowerCase()).toString("hex")}`;
+    artist = await prisma.artist.findFirst({
+      where: { OR: [{ slug }, { name: { equals: query.vendor, mode: "insensitive" } }] },
+      select: { productSpecSchema: true },
+      orderBy: { createdAt: "asc" },
+    });
+  }
+  res.json({
+    specs: artist ? specsFromTemplate(artist.productSpecSchema) : defaultProductSpecs(),
+    suggested: true,
+  });
 });
 
 productsRouter.get("/:id", async (req, res) => {

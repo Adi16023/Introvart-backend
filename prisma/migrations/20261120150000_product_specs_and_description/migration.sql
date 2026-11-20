@@ -1,0 +1,5 @@
+ALTER TABLE "Artist"
+ADD COLUMN "productSpecSchema" JSONB NOT NULL DEFAULT '[]';
+
+ALTER TABLE "Products"
+ADD COLUMN "specs" JSONB NOT NULL DEFAULT '[]';
