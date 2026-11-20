@@ -13,7 +13,7 @@ import { loadHomepage, type HomepageConfig } from "./homepage";
 const cardSelect = {
   id: true, slug: true, title: true, image: true, images: true,
   fulfilment: true, basePrice: true, priceFactor: true, stock: true,
-  rating: true, reviewCount: true, giftCard: true,
+  rating: true, reviewCount: true, giftCard: true, createdAt: true,
   personalization: true,
   artist: { select: { id: true, name: true } },
   variants: { select: { id: true, price: true }, orderBy: { price: "asc" }, take: 1 },
