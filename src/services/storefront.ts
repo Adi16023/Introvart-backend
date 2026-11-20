@@ -13,19 +13,23 @@ import { loadHomepage, type HomepageConfig } from "./homepage";
 const cardSelect = {
   id: true, slug: true, title: true, image: true, images: true,
   fulfilment: true, basePrice: true, priceFactor: true, stock: true,
-  rating: true, reviewCount: true,
+  rating: true, reviewCount: true, giftCard: true,
+  personalization: true,
   artist: { select: { id: true, name: true } },
-  variants: { select: { price: true }, orderBy: { price: "asc" }, take: 1 },
+  variants: { select: { id: true, price: true }, orderBy: { price: "asc" }, take: 1 },
 } satisfies Prisma.ProductSelect;
 
 const visibleProducts = { status: "approved", fulfilment: { not: "commission" }, artist: { suspended: false } } satisfies Prisma.ProductWhereInput;
 
 function card(config: PricingConfig, product: Prisma.ProductGetPayload<{ select: typeof cardSelect }>) {
-  const { variants: _variants, basePrice: _base, priceFactor: _factor, images, ...summary } = product;
+  const { variants, basePrice: _base, priceFactor: _factor, images, personalization, ...summary } = product;
+  const fields = Array.isArray(personalization) ? personalization : [];
   return {
     ...summary,
     images: productImageSchema.array().parse(images).slice(0, 2),
     fromPrice: fromPrice(config, product),
+    defaultVariantId: variants[0]?.id,
+    needsPersonalization: fields.length > 0 || product.fulfilment === "personalized",
   };
 }
 

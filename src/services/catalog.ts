@@ -46,14 +46,30 @@ export type CatalogQuery = {
   mode?: "all" | "original" | "collection" | "occasion" | "colour" | "room";
   value?: string;
   colour?: string;
+  colours?: string;
   room?: string;
   inStock?: boolean;
+  availability?: string;
   sort?: "featured" | "price-asc" | "price-desc" | "rating" | "newest";
   fulfilment?: string;
   artist?: string;
+  artists?: string;
+  sizes?: string;
+  minPrice?: number;
+  maxPrice?: number;
   page: number;
   limit: number;
 };
+
+function csv(value?: string) {
+  return (value ?? "").split(",").map((entry) => entry.trim()).filter(Boolean);
+}
+
+function productInStock(product: ProductWithArtist) {
+  return product.variants?.length
+    ? product.variants.some((variant) => variantAvailable(variant))
+    : product.stock === null || product.stock > 0;
+}
 
 const artistSelect = { select: { id: true, slug: true, name: true, city: true, verified: true, boostedUntil: true } } as const;
 
@@ -66,10 +82,14 @@ export async function listProducts(query: CatalogQuery) {
     ids = collection?.ids ?? [];
   }
 
+  const artistSlugs = [...new Set([...csv(query.artists), ...(query.artist ? [query.artist] : [])])];
   const rows = await prisma.product.findMany({
     where: {
       status: "approved",
-      artist: { suspended: false, ...(query.artist ? { slug: query.artist } : {}) },
+      artist: {
+        suspended: false,
+        ...(artistSlugs.length === 1 ? { slug: artistSlugs[0] } : artistSlugs.length > 1 ? { slug: { in: artistSlugs } } : {}),
+      },
       ...(mode === "original" ? { fulfilment: "original" } : query.fulfilment ? { fulfilment: query.fulfilment } : { fulfilment: { not: "commission" } }),
       ...(ids ? { id: { in: ids } } : {}),
     },
@@ -82,12 +102,45 @@ export async function listProducts(query: CatalogQuery) {
   if (mode === "occasion") list = list.filter((a) => a.occasions.some((x) => x.toLowerCase() === value));
   if (mode === "colour") list = list.filter((a) => a.colours.some((x) => x.toLowerCase() === value));
   if (mode === "room") list = list.filter((a) => a.rooms.some((x) => x.toLowerCase().replace(/\s+/g, "-") === value));
-  if (query.colour) list = list.filter((a) => a.colours.includes(query.colour!));
+  const colours = [...new Set([...csv(query.colours), ...(query.colour ? [query.colour] : [])])];
+  if (colours.length) list = list.filter((a) => a.colours.some((colour) => colours.includes(colour)));
   if (query.room) list = list.filter((a) => a.rooms.includes(query.room!));
-  if (query.inStock) list = list.filter((a) => a.variants?.length ? a.variants.some((variant) => variantAvailable(variant)) : a.stock === null || a.stock > 0);
+
+  const availability = new Set(csv(query.availability).map((entry) => entry.toLowerCase()));
+  const wantIn = availability.has("in") || availability.has("in-stock") || availability.has("instock");
+  const wantOut = availability.has("out") || availability.has("out-of-stock") || availability.has("outofstock");
+  if (wantIn !== wantOut) {
+    list = list.filter((a) => (wantIn ? productInStock(a) : !productInStock(a)));
+  } else if (query.inStock) {
+    list = list.filter((a) => productInStock(a));
+  }
+
+  const sizeTokens = new Set(csv(query.sizes).map((entry) => entry.toLowerCase()));
+  if (sizeTokens.size) {
+    for (const size of config.sizes) {
+      if (sizeTokens.has(size.id.toLowerCase()) || sizeTokens.has(size.label.toLowerCase())) {
+        sizeTokens.add(size.id.toLowerCase());
+        sizeTokens.add(size.label.toLowerCase());
+        if (size.cm) sizeTokens.add(size.cm.toLowerCase());
+      }
+    }
+    list = list.filter((product) => {
+      if (!product.variants?.length) return product.fulfilment === "original" && sizeTokens.has("original");
+      return product.variants.some((variant) => variant.optionValues.some((option) => sizeTokens.has(option.toLowerCase())));
+    });
+  }
+
   if (query.q?.trim()) list = list.filter((a) => matches(query.q!, a, a.artist.name));
 
   const price = (a: ProductWithArtist) => fromPrice(config, a);
+  if (query.minPrice != null || query.maxPrice != null) {
+    list = list.filter((a) => {
+      const amount = price(a);
+      if (query.minPrice != null && amount < query.minPrice) return false;
+      if (query.maxPrice != null && amount > query.maxPrice) return false;
+      return true;
+    });
+  }
   if (query.sort === "price-asc") list = [...list].sort((a, b) => price(a) - price(b));
   else if (query.sort === "price-desc") list = [...list].sort((a, b) => price(b) - price(a));
   else if (query.sort === "rating") list = [...list].sort((a, b) => b.rating - a.rating);
