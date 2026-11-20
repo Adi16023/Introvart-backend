@@ -15,7 +15,8 @@ export const DEFAULT_MATERIAL_OPTIONS = ["Canvas", "Paper", "Wood", "Metal", "Ac
 export const productSpecSchema = z.object({
   name: z.string().trim().min(1).max(80),
   options: z.array(z.string().trim().min(1).max(120)).max(50).default([]),
-  value: z.string().trim().max(120).default(""),
+  // Joined multi-select values (e.g. "Matte · Gloss") need more room than a single label.
+  value: z.string().trim().max(500).default(""),
 });
 
 export const productSpecTemplateSchema = z.object({
@@ -46,6 +47,23 @@ export function normalizeSpecs(input: unknown): ProductSpec[] {
   }
   if (!specs.some((spec) => spec.name.toLowerCase() === DEFAULT_SPEC_NAME.toLowerCase())) {
     specs.unshift(...defaultProductSpecs());
+  }
+  return specs;
+}
+
+/** Variant overrides: keep selected values as-is; do not force Material or product catalog defaults. */
+export function normalizeVariantSpecs(input: unknown): ProductSpec[] {
+  const parsed = productSpecsArraySchema.catch([]).parse(input);
+  const seen = new Set<string>();
+  const specs: ProductSpec[] = [];
+  for (const spec of parsed) {
+    const key = spec.name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const options = [...new Set(spec.options.map((option) => option.trim()).filter(Boolean))];
+    const value = spec.value.trim() || options.join(" · ");
+    if (!options.length && !value) continue;
+    specs.push({ name: spec.name.trim(), options: options.length ? options : value.split(/\s*[·,]\s*/).map((entry) => entry.trim()).filter(Boolean), value });
   }
   return specs;
 }

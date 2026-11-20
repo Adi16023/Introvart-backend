@@ -3,7 +3,7 @@ import type { Prisma } from "@prisma/client";
 import { json, prisma, transaction, type Tx } from "../lib/db";
 import { badRequest, conflict, uid } from "../lib/http";
 import { audit } from "./audit";
-import { normalizeSpecs, sanitizeDescriptionHtml, schemaFromSpecs, type ProductSpec } from "./product-specs";
+import { normalizeSpecs, normalizeVariantSpecs, productSpecSchema, sanitizeDescriptionHtml, schemaFromSpecs, type ProductSpec } from "./product-specs";
 
 const money = z.number().finite().min(0).max(10_000_000).refine((value) => Math.abs(value * 100 - Math.round(value * 100)) < 0.00001, "Use at most two decimal places");
 const imageUrl = z.string().url().max(2048).refine((value) => value.startsWith("https://"), "Use an HTTPS image URL");
@@ -39,6 +39,7 @@ export const variantSchema = z.object({
   packedWidth: z.number().finite().min(0).nullable().default(null),
   packedHeight: z.number().finite().min(0).nullable().default(null),
   packedDimensionUnit: z.string().max(20).default(""),
+  specs: z.array(productSpecSchema).max(30).default([]),
 });
 export const productSchema = z.object({
   handle: z.string().trim().min(1).max(200).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Use lowercase letters, digits and hyphens"),
@@ -61,11 +62,7 @@ export const productSchema = z.object({
   metafields: z.record(z.string(), z.string()).default({}),
   googleShopping: z.record(z.string(), z.string()).default({}),
   sourceRows: z.array(z.record(z.string(), z.string())).max(1000).default([]),
-  specs: z.array(z.object({
-    name: z.string().trim().min(1).max(80),
-    options: z.array(z.string().trim().min(1).max(120)).max(50).default([]),
-    value: z.string().trim().max(120).default(""),
-  })).max(30).default([]),
+  specs: z.array(productSpecSchema).max(30).default([]),
 }).superRefine((product, context) => {
   if (product.published && product.catalogStatus === "active" && !product.images.length) {
     context.addIssue({ code: "custom", path: ["images"], message: "An active published product needs at least one image" });
@@ -94,6 +91,16 @@ export const productSchema = z.object({
 
 export type ProductInput = z.infer<typeof productSchema>;
 export const productInclude = { variants: { orderBy: { sort: "asc" as const } } };
+
+function variantWriteData(variant: Omit<z.infer<typeof variantSchema>, "id">, sort: number) {
+  const specs = normalizeVariantSpecs(variant.specs);
+  return {
+    ...variant,
+    specs: json(specs),
+    unitPriceMeasure: json(variant.unitPriceMeasure),
+    sort,
+  };
+}
 
 export function plainDescription(html: string) {
   return html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "").replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, "")
@@ -158,7 +165,7 @@ async function insertProduct(tx: Tx, input: ProductInput) {
   return tx.product.create({
     data: {
       ...productData(input, artistId, specs),
-      variants: { create: input.variants.map(({ id: _variantId, ...variant }, sort) => ({ ...variant, unitPriceMeasure: json(variant.unitPriceMeasure), sort })) },
+      variants: { create: input.variants.map(({ id: _variantId, ...variant }, sort) => variantWriteData(variant, sort)) },
     },
     include: productInclude,
   });
@@ -197,7 +204,7 @@ export async function updateProduct(id: string, input: ProductInput, actor: stri
     });
     for (const [sort, variant] of input.variants.entries()) {
       const { id: variantId, ...variantFields } = variant;
-      const data = { ...variantFields, unitPriceMeasure: json(variant.unitPriceMeasure), sort };
+      const data = variantWriteData(variantFields, sort);
       if (variantId) {
         await tx.productVariant.update({ where: { id: variantId }, data });
       } else {
@@ -240,7 +247,8 @@ export async function importProducts(products: ProductInput[], actor: string, re
       const row = productData(product, artistId, specs);
       productRows.push(row);
       variantRows.push(...product.variants.map((variant, sort) => ({
-        ...variant, productId: row.id, unitPriceMeasure: json(variant.unitPriceMeasure), sort,
+        ...variantWriteData(variant, sort),
+        productId: row.id,
       })));
     }
     await tx.product.createMany({ data: productRows });

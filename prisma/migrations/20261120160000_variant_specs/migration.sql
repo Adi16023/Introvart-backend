@@ -1,0 +1,2 @@
+ALTER TABLE "ProductVariant"
+ADD COLUMN "specs" JSONB NOT NULL DEFAULT '[]';

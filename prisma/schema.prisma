@@ -178,6 +178,8 @@ model ProductVariant {
   packedWidth         Float?
   packedHeight        Float?
   packedDimensionUnit String   @default("")
+  /** Per-variant product-spec overrides. Multi-select stores selected values in options + joined value. */
+  specs               Json     @default("[]")
   sort                Int      @default(0)
 
   @@index([productId])

@@ -98,7 +98,7 @@ test("cart uses authoritative variant prices, rejects stale variants and preserv
     id: "v1", productId: "p1", optionValues: ["A4"], sku: "PRINT-A4", barcode: "", price: 109.5, compareAtPrice: null,
     inventoryTracker: "", inventoryQuantity: 0, inventoryPolicy: "deny", fulfillmentService: "manual", requiresShipping: true,
     taxable: true, grams: 0, weightUnit: "kg", image: "", taxCode: "", costPerItem: null, unitPriceMeasure: {},
-    packedLength: null, packedWidth: null, packedHeight: null, packedDimensionUnit: "", sort: 0,
+    packedLength: null, packedWidth: null, packedHeight: null, packedDimensionUnit: "", specs: [], sort: 0,
   };
   const base = { id: "p1", slug: "print", stock: null, status: "approved", artistId: "vendor", fulfilment: "platform_pod", basePrice: 0, priceFactor: 1, personalization: null, variants: [variant] };
   stub(prisma.product, "findMany", async () => [base]);
