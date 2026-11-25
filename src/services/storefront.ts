@@ -6,6 +6,7 @@ import { loadMenu } from "./menu";
 import { fromPrice, loadConfig, type PricingConfig } from "./pricing";
 import { productImageSchema } from "./products";
 import { loadSearchSettings } from "./searchSettings";
+import { loadPromoPopup } from "./promoPopup";
 import { loadPaymentSettings } from "./paymentSettings";
 import { cashfreeConfigured } from "./cashfree";
 import { loadHomepage, type HomepageConfig } from "./homepage";
@@ -16,7 +17,7 @@ const cardSelect = {
   rating: true, reviewCount: true, giftCard: true, createdAt: true,
   personalization: true,
   artist: { select: { id: true, name: true } },
-  variants: { select: { id: true, price: true }, orderBy: { price: "asc" }, take: 1 },
+  variants: { select: { id: true, price: true, compareAtPrice: true }, orderBy: { price: "asc" }, take: 1 },
 } satisfies Prisma.ProductSelect;
 
 const visibleProducts = { status: "approved", fulfilment: { not: "commission" }, artist: { suspended: false } } satisfies Prisma.ProductWhereInput;
@@ -24,20 +25,35 @@ const visibleProducts = { status: "approved", fulfilment: { not: "commission" },
 function card(config: PricingConfig, product: Prisma.ProductGetPayload<{ select: typeof cardSelect }>) {
   const { variants, basePrice: _base, priceFactor: _factor, images, personalization, ...summary } = product;
   const fields = Array.isArray(personalization) ? personalization : [];
+  const selling = fromPrice(config, product);
+  const rawCompareAt = variants[0]?.compareAtPrice;
+  // Null → shopfront applies the default 20% offer; a value replaces it.
+  const compareAtFromPrice =
+    rawCompareAt != null && Number.isFinite(rawCompareAt) && rawCompareAt > selling
+      ? Math.round(rawCompareAt)
+      : null;
   return {
     ...summary,
     images: productImageSchema.array().parse(images).slice(0, 2),
-    fromPrice: fromPrice(config, product),
+    fromPrice: selling,
+    compareAtFromPrice,
     defaultVariantId: variants[0]?.id,
     needsPersonalization: fields.length > 0 || product.fulfilment === "personalized",
   };
 }
 
 async function buildStorefrontHome() {
-  const [settings, banners, collections, occasions, artists, trending, newest, menu, announcement, searchSettings, payments] = await Promise.all([
+  const [settings, banners, collections, occasions, artists, trending, newest, menu, announcement, searchSettings, promoPopup, payments] = await Promise.all([
     loadConfig(),
     prisma.banner.findMany({ where: { active: true }, orderBy: { sort: "asc" }, take: 3 }),
-    prisma.collection.findMany({ orderBy: { sort: "asc" }, select: { slug: true, title: true, lede: true, image: true, menuPlacement: true, createdAt: true } }),
+    prisma.collection.findMany({
+      orderBy: { sort: "asc" },
+      select: {
+        slug: true, title: true, lede: true, image: true, menuPlacement: true, createdAt: true,
+        pageSectionMode: true, bannerEyebrow: true, bannerTitle: true, bannerSubtitle: true,
+        bannerHref: true, bannerButtonLabel: true, bannerImage: true, relatedTitle: true, relatedCollectionSlugs: true,
+      },
+    }),
     prisma.occasion.findMany({ orderBy: { sort: "asc" } }),
     prisma.artist.findMany({
       where: { verified: true, suspended: false }, orderBy: { name: "asc" }, take: 6,
@@ -48,6 +64,7 @@ async function buildStorefrontHome() {
     loadMenu(),
     loadAnnouncement(),
     loadSearchSettings(),
+    loadPromoPopup(),
     loadPaymentSettings(),
   ]);
   const { published: homepage } = await loadHomepage(banners);
@@ -69,13 +86,13 @@ async function buildStorefrontHome() {
     config: { ...config, codEnabled: payments.codEnabled, onlinePayments: cashfreeConfigured() },
     colours, rooms: allRooms, partnerName,
     banners,
-    collections: collections.map((item) => ({ ...item, image: canonicalMediaUrl(item.image) })),
+    collections: collections.map((item) => ({ ...item, image: canonicalMediaUrl(item.image), bannerImage: canonicalMediaUrl(item.bannerImage) })),
     occasions,
     artists,
     trending: trending.map((product) => card(config, product)),
     newest: newest.map((product) => card(config, product)),
     roomHighlights: rooms.map((name) => roomRows.find((room) => room.name === name) ?? { name, count: 0, image: "" }),
-    menu, announcement, searchSettings, homepage, ...content,
+    menu, announcement, searchSettings, promoPopup, homepage, ...content,
   };
 }
 

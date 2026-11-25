@@ -10,6 +10,7 @@ import { loadMenu, menuSchema, saveMenu } from "../services/menu";
 import { analyticsOverview } from "../services/analytics";
 import { announcementSchema, loadAnnouncement, saveAnnouncement } from "../services/announcement";
 import { loadSearchSettings, saveSearchSettings, searchSettingsSchema } from "../services/searchSettings";
+import { loadPromoPopup, promoPopupSchema, savePromoPopup } from "../services/promoPopup";
 import { commissions } from "../services/commissions";
 import { issueGiftCard } from "../services/giftcards";
 import { grossMerchandiseValue } from "./admin";
@@ -66,7 +67,7 @@ adminContentRouter.get("/cms", needAdmin("cms"), async (_req, res) => {
     prisma.collection.findMany({ orderBy: { sort: "asc" } }),
     prisma.occasion.findMany({ orderBy: { sort: "asc" } }),
   ]);
-  res.json({ banners, posts, policies, collections: collections.map((collection) => ({ ...collection, image: canonicalMediaUrl(collection.image) })), occasions });
+  res.json({ banners, posts, policies, collections: collections.map((collection) => presentCollection(collection)), occasions });
 });
 
 adminContentRouter.get("/cms/menu", needAdmin("cms"), async (_req, res) => {
@@ -127,6 +128,9 @@ adminContentRouter.put("/cms/policies/:slug", needAdmin("cms"), async (req, res)
   res.json(policy);
 });
 
+const collectionHref = z.string().trim().max(500)
+  .refine((value) => value === "" || /^\/(?!\/)/.test(value) || /^https:\/\//i.test(value), "Use a path such as /shop or an https:// link");
+
 const collectionBody = z.object({
   title: z.string().min(2).max(80),
   lede: z.string().max(300).default(""),
@@ -134,24 +138,52 @@ const collectionBody = z.object({
   sort: z.coerce.number().int().default(0),
   image: z.string().max(2000).default(""),
   menuPlacement: z.enum(["collections", "new-arrivals", "featured", "artwork-gifts", "all-artwork", "hidden"]).default("collections"),
+  pageSectionMode: z.enum(["off", "banner", "related"]).default("off"),
+  bannerEyebrow: z.string().trim().max(80).default(""),
+  bannerTitle: z.string().trim().max(120).default(""),
+  bannerSubtitle: z.string().trim().max(300).default(""),
+  bannerHref: collectionHref.default(""),
+  bannerButtonLabel: z.string().trim().max(80).default(""),
+  bannerImage: z.string().max(2000).default(""),
+  relatedTitle: z.string().trim().max(80).default("More collections"),
+  relatedCollectionSlugs: z.array(z.string().trim().min(1).max(80)).max(8).default([]),
 });
+
+function presentCollection<T extends { image: string; bannerImage: string }>(collection: T) {
+  return { ...collection, image: canonicalMediaUrl(collection.image), bannerImage: canonicalMediaUrl(collection.bannerImage) };
+}
+
+async function assertRelatedCollections(slug: string | null, related: string[]) {
+  const slugs = [...new Set(related.filter((item) => item !== slug))];
+  if (slugs.length && (await prisma.collection.count({ where: { slug: { in: slugs } } })) !== slugs.length) {
+    throw badRequest("One of the related collections no longer exists");
+  }
+  return slugs;
+}
 
 adminContentRouter.post("/cms/collections", needAdmin("cms"), async (req, res) => {
   const body = parse(collectionBody, req.body);
   const slug = slugify(body.title);
   if (await prisma.collection.findUnique({ where: { slug } })) throw conflict("A collection with that title exists");
   const image = body.image ? await resolveOne(req, body.image, ["cms"]) : "";
-  const collection = await prisma.collection.create({ data: { slug, ...body, image } });
+  const bannerImage = body.bannerImage ? await resolveOne(req, body.bannerImage, ["cms"]) : "";
+  const relatedCollectionSlugs = await assertRelatedCollections(slug, body.relatedCollectionSlugs);
+  const collection = await prisma.collection.create({ data: { slug, ...body, image, bannerImage, relatedCollectionSlugs } });
+  invalidateStorefrontHome();
   await audit(prisma, actorLabel(req), `Created collection "${collection.title}"`);
-  res.status(201).json({ ...collection, image: canonicalMediaUrl(collection.image) });
+  res.status(201).json(presentCollection(collection));
 });
 
 adminContentRouter.patch("/cms/collections/:slug", needAdmin("cms"), async (req, res) => {
+  const slug = param(req, "slug");
   const body = parse(collectionBody.partial(), req.body);
   if (body.image) body.image = await resolveOne(req, body.image, ["cms"]);
-  const collection = await prisma.collection.update({ where: { slug: param(req, "slug") }, data: body });
+  if (body.bannerImage) body.bannerImage = await resolveOne(req, body.bannerImage, ["cms"]);
+  if (body.relatedCollectionSlugs) body.relatedCollectionSlugs = await assertRelatedCollections(slug, body.relatedCollectionSlugs);
+  const collection = await prisma.collection.update({ where: { slug }, data: body });
+  invalidateStorefrontHome();
   await audit(prisma, actorLabel(req), `Updated collection "${collection.title}"`);
-  res.json({ ...collection, image: canonicalMediaUrl(collection.image) });
+  res.json(presentCollection(collection));
 });
 
 adminContentRouter.delete("/cms/collections/:slug", needAdmin("cms"), async (req, res) => {
@@ -159,6 +191,7 @@ adminContentRouter.delete("/cms/collections/:slug", needAdmin("cms"), async (req
   const existing = await prisma.collection.findUnique({ where: { slug } });
   if (!existing) throw notFound("Collection not found");
   await prisma.collection.delete({ where: { slug } });
+  invalidateStorefrontHome();
   await audit(prisma, actorLabel(req), `Deleted collection "${existing.title}"`);
   res.status(204).end();
 });
@@ -312,6 +345,19 @@ adminContentRouter.get("/cms/search", needAdmin("cms"), async (_req, res) => {
 adminContentRouter.put("/cms/search", needAdmin("cms"), async (req, res) => {
   const saved = await saveSearchSettings(parse(searchSettingsSchema, req.body));
   await audit(prisma, actorLabel(req), "Updated search bar settings");
+  res.json(saved);
+});
+
+adminContentRouter.get("/cms/popup", needAdmin("cms"), async (_req, res) => {
+  res.json(await loadPromoPopup());
+});
+
+adminContentRouter.put("/cms/popup", needAdmin("cms"), async (req, res) => {
+  const body = parse(promoPopupSchema, req.body);
+  const image = body.image ? await resolveCmsImage(req, body.image, "Popup image") : "";
+  const saved = await savePromoPopup({ ...body, image });
+  invalidateStorefrontHome();
+  await audit(prisma, actorLabel(req), "Updated promo popup");
   res.json(saved);
 });
 

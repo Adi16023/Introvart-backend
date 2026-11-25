@@ -207,14 +207,23 @@ model Review {
 }
 
 model Collection {
-  slug         String   @id
-  title        String
-  lede         String   @default("")
-  ids          String[]
-  sort         Int      @default(0)
-  image        String   @default("")
-  menuPlacement String  @default("collections")
-  createdAt    DateTime @default(now())
+  slug                   String   @id
+  title                  String
+  lede                   String   @default("")
+  ids                    String[]
+  sort                   Int      @default(0)
+  image                  String   @default("")
+  menuPlacement          String   @default("collections")
+  pageSectionMode        String   @default("off")
+  bannerEyebrow          String   @default("")
+  bannerTitle            String   @default("")
+  bannerSubtitle         String   @default("")
+  bannerHref             String   @default("")
+  bannerButtonLabel      String   @default("")
+  bannerImage            String   @default("")
+  relatedTitle           String   @default("More collections")
+  relatedCollectionSlugs String[] @default([])
+  createdAt              DateTime @default(now())
 }
 
 model Occasion {

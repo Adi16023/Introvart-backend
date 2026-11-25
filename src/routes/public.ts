@@ -5,6 +5,7 @@ import { notFound, param, parse, uid } from "../lib/http";
 import { canonicalMediaUrl } from "../lib/storage";
 import { loadMenu } from "../services/menu";
 import { loadAnnouncement } from "../services/announcement";
+import { loadPromoPopup } from "../services/promoPopup";
 import { loadSearchSettings } from "../services/searchSettings";
 import { cashfreeConfigured } from "../services/cashfree";
 import { loadPaymentSettings } from "../services/paymentSettings";
@@ -80,7 +81,11 @@ publicRouter.get("/home", async (_req, res) => {
   ]);
   res.json({
     banners,
-    collections: collections.map((collection) => ({ ...collection, image: canonicalMediaUrl(collection.image) })),
+    collections: collections.map((collection) => ({
+      ...collection,
+      image: canonicalMediaUrl(collection.image),
+      bannerImage: canonicalMediaUrl(collection.bannerImage),
+    })),
     occasions,
     artists: artists.map(publicArtist),
     trending: (top as ProductWithArtist[]).map((a) => present(config, a)),
@@ -192,20 +197,33 @@ publicRouter.get("/announcement", async (_req, res) => {
   res.json(await loadAnnouncement());
 });
 
+publicRouter.get("/promo-popup", async (_req, res) => {
+  res.json(await loadPromoPopup());
+});
+
 publicRouter.get("/search/settings", async (_req, res) => {
   res.json(await loadSearchSettings());
 });
 
 publicRouter.get("/collections", async (_req, res) => {
   const collections = await prisma.collection.findMany({ orderBy: { sort: "asc" } });
-  res.json(collections.map((collection) => ({ ...collection, image: canonicalMediaUrl(collection.image) })));
+  res.json(collections.map((collection) => ({
+    ...collection,
+    image: canonicalMediaUrl(collection.image),
+    bannerImage: canonicalMediaUrl(collection.bannerImage),
+  })));
 });
 
 publicRouter.get("/collections/:slug", async (req, res) => {
   const collection = await prisma.collection.findUnique({ where: { slug: param(req, "slug") } });
   if (!collection) throw notFound("Collection not found");
   const items = (await productsByIds(collection.ids)).filter((a) => a.status === "approved");
-  res.json({ ...collection, image: canonicalMediaUrl(collection.image), products: items });
+  res.json({
+    ...collection,
+    image: canonicalMediaUrl(collection.image),
+    bannerImage: canonicalMediaUrl(collection.bannerImage),
+    products: items,
+  });
 });
 
 publicRouter.get("/occasions", async (_req, res) => {
